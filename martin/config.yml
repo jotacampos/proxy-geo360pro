@@ -1,0 +1,39 @@
+# =============================================================================
+# Martin Tile Server Configuration
+# =============================================================================
+# Configuração para usar apenas funções personalizadas (sem auto-discovery)
+# =============================================================================
+
+# Listen address
+listen_addresses: '0.0.0.0:3000'
+
+# CORS - permitir acesso direto do browser para testes
+cors:
+  origin: ['*']
+
+# PostgreSQL connections
+postgres:
+  - connection_string: '${DATABASE_URL}'
+    default_srid: 4326
+    pool_size: 5
+    auto_publish:
+      tables: false
+      functions:
+        from_schemas:
+          - public
+        id_format: '{function}'
+    # Funções explícitas (caso auto_publish não detecte)
+    functions:
+      get_dynamic_tile_simplify:
+        schema: public
+        function: get_dynamic_tile_simplify
+      get_dynamic_tile_intersection:
+        schema: public
+        function: get_dynamic_tile_intersection
+      get_dynamic_tile_buffer:
+        schema: public
+        function: get_dynamic_tile_buffer
+
+# IMPORTANTE: Desabilitar cache do Martin para dev
+# Martin tem default de 512MB, precisamos setar explicitamente para 0
+cache_size_mb: 0

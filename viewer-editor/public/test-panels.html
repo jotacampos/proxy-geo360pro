@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Teste - Painéis Redimensionáveis</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body, #root {
+      height: 100%;
+      width: 100%;
+      overflow: hidden;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #030712;
+      color: #fff;
+    }
+
+    /* Container principal */
+    .container {
+      display: flex;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    /* Painéis */
+    .panel {
+      height: 100%;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .panel-left {
+      background: #111827;
+      border-right: 1px solid #374151;
+    }
+
+    .panel-center {
+      background: #1f2937;
+      flex: 1;
+    }
+
+    .panel-right {
+      background: #111827;
+      border-left: 1px solid #374151;
+    }
+
+    .panel-header {
+      height: 40px;
+      border-bottom: 1px solid #374151;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      flex-shrink: 0;
+    }
+
+    .panel-header span {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #10b981;
+    }
+
+    .panel-content {
+      flex: 1;
+      padding: 12px;
+      overflow: auto;
+    }
+
+    /* Separador/Resize Handle */
+    .resize-handle {
+      width: 8px;
+      background: #4b5563;
+      cursor: col-resize;
+      transition: background 0.15s ease;
+      flex-shrink: 0;
+    }
+
+    .resize-handle:hover {
+      background: #10b981;
+    }
+
+    .resize-handle:active,
+    .resize-handle.dragging {
+      background: #059669;
+    }
+
+    /* Conteúdo placeholder */
+    .placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #6b7280;
+    }
+
+    .placeholder-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+
+    .placeholder-text {
+      font-size: 16px;
+      font-weight: 500;
+    }
+
+    .placeholder-sub {
+      font-size: 14px;
+      margin-top: 8px;
+    }
+
+    /* Status bar */
+    .status-bar {
+      height: 24px;
+      background: #111827;
+      border-top: 1px solid #374151;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      font-size: 12px;
+      color: #9ca3af;
+      flex-shrink: 0;
+    }
+
+    .status-bar .connected {
+      color: #10b981;
+      margin-left: auto;
+    }
+
+    /* Layout wrapper */
+    .app-layout {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    .panels-container {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+    <div class="panels-container">
+      <!-- Painel Esquerdo -->
+      <div class="panel panel-left" id="panel-left" style="width: 20%;">
+        <div class="panel-header">
+          <span>Seleção</span>
+        </div>
+        <div class="panel-content">
+          <div style="margin-bottom: 16px;">
+            <h3 style="font-size: 12px; color: #9ca3af; text-transform: uppercase; margin-bottom: 8px;">Objetos Selecionados</h3>
+            <div style="background: #1f2937; padding: 12px; border-radius: 6px; text-align: center; color: #6b7280; font-size: 14px;">
+              Nenhum objeto selecionado
+            </div>
+          </div>
+          <div>
+            <h3 style="font-size: 12px; color: #9ca3af; text-transform: uppercase; margin-bottom: 8px;">Detalhes</h3>
+            <div style="background: #1f2937; padding: 12px; border-radius: 6px; text-align: center; color: #6b7280; font-size: 14px;">
+              Selecione um objeto
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Separador 1 -->
+      <div class="resize-handle" id="handle-1"></div>
+
+      <!-- Painel Central -->
+      <div class="panel panel-center" id="panel-center" style="flex: 1;">
+        <div class="placeholder">
+          <div class="placeholder-icon">🗺️</div>
+          <div class="placeholder-text">Área do Mapa</div>
+          <div class="placeholder-sub">deck.gl + MapLibre</div>
+        </div>
+      </div>
+
+      <!-- Separador 2 -->
+      <div class="resize-handle" id="handle-2"></div>
+
+      <!-- Painel Direito -->
+      <div class="panel panel-right" id="panel-right" style="width: 20%;">
+        <div class="panel-header">
+          <span>Camadas</span>
+        </div>
+        <div class="panel-content">
+          <div style="font-size: 12px; color: #9ca3af; text-transform: uppercase; margin-bottom: 12px;">
+            Gerenciador de Camadas
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <div style="background: #1f2937; padding: 8px 12px; border-radius: 6px; font-size: 14px;">
+              cadastro.lotes
+            </div>
+            <div style="background: #1f2937; padding: 8px 12px; border-radius: 6px; font-size: 14px;">
+              infra.postes
+            </div>
+            <div style="background: #1f2937; padding: 8px 12px; border-radius: 6px; font-size: 14px;">
+              hidro.rios
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status Bar -->
+    <div class="status-bar">
+      <span>Modo: Visualização</span>
+      <span style="margin: 0 12px; color: #4b5563;">|</span>
+      <span>Seleção: 0 objetos</span>
+      <span style="margin: 0 12px; color: #4b5563;">|</span>
+      <span>Camadas: 3 visíveis</span>
+      <span class="connected">● Conectado</span>
+    </div>
+  </div>
+
+  <script>
+    // Implementação do resize manual (sem biblioteca)
+    (function() {
+      const panelLeft = document.getElementById('panel-left');
+      const panelCenter = document.getElementById('panel-center');
+      const panelRight = document.getElementById('panel-right');
+      const handle1 = document.getElementById('handle-1');
+      const handle2 = document.getElementById('handle-2');
+      const container = document.querySelector('.panels-container');
+
+      let isDragging = false;
+      let currentHandle = null;
+      let startX = 0;
+      let startLeftWidth = 0;
+      let startRightWidth = 0;
+
+      // Limites de tamanho (em pixels)
+      const MIN_SIZE = 150;
+      const MAX_SIZE_PERCENT = 0.4; // 40% do container
+
+      function startDrag(e, handle) {
+        isDragging = true;
+        currentHandle = handle;
+        startX = e.clientX;
+        startLeftWidth = panelLeft.offsetWidth;
+        startRightWidth = panelRight.offsetWidth;
+
+        handle.classList.add('dragging');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+
+        e.preventDefault();
+      }
+
+      function doDrag(e) {
+        if (!isDragging) return;
+
+        const containerWidth = container.offsetWidth;
+        const maxSize = containerWidth * MAX_SIZE_PERCENT;
+        const deltaX = e.clientX - startX;
+
+        if (currentHandle === handle1) {
+          // Redimensionando painel esquerdo
+          let newWidth = startLeftWidth + deltaX;
+          newWidth = Math.max(MIN_SIZE, Math.min(maxSize, newWidth));
+          panelLeft.style.width = newWidth + 'px';
+        } else if (currentHandle === handle2) {
+          // Redimensionando painel direito
+          let newWidth = startRightWidth - deltaX;
+          newWidth = Math.max(MIN_SIZE, Math.min(maxSize, newWidth));
+          panelRight.style.width = newWidth + 'px';
+        }
+      }
+
+      function endDrag() {
+        if (!isDragging) return;
+
+        isDragging = false;
+        if (currentHandle) {
+          currentHandle.classList.remove('dragging');
+        }
+        currentHandle = null;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+
+      // Event listeners para handle 1
+      handle1.addEventListener('mousedown', (e) => startDrag(e, handle1));
+
+      // Event listeners para handle 2
+      handle2.addEventListener('mousedown', (e) => startDrag(e, handle2));
+
+      // Event listeners globais
+      document.addEventListener('mousemove', doDrag);
+      document.addEventListener('mouseup', endDrag);
+
+      // Suporte a touch
+      handle1.addEventListener('touchstart', (e) => {
+        const touch = e.touches[0];
+        startDrag({ clientX: touch.clientX, preventDefault: () => e.preventDefault() }, handle1);
+      });
+
+      handle2.addEventListener('touchstart', (e) => {
+        const touch = e.touches[0];
+        startDrag({ clientX: touch.clientX, preventDefault: () => e.preventDefault() }, handle2);
+      });
+
+      document.addEventListener('touchmove', (e) => {
+        if (!isDragging) return;
+        const touch = e.touches[0];
+        doDrag({ clientX: touch.clientX });
+      });
+
+      document.addEventListener('touchend', endDrag);
+
+      // Inicializa com tamanhos percentuais convertidos para pixels
+      function initSizes() {
+        const containerWidth = container.offsetWidth;
+        panelLeft.style.width = (containerWidth * 0.2) + 'px';
+        panelRight.style.width = (containerWidth * 0.2) + 'px';
+      }
+
+      // Recalcula ao redimensionar janela
+      window.addEventListener('resize', () => {
+        const containerWidth = container.offsetWidth;
+        const leftWidth = panelLeft.offsetWidth;
+        const rightWidth = panelRight.offsetWidth;
+
+        // Mantém proporções se exceder limites
+        const maxSize = containerWidth * MAX_SIZE_PERCENT;
+        if (leftWidth > maxSize) panelLeft.style.width = maxSize + 'px';
+        if (rightWidth > maxSize) panelRight.style.width = maxSize + 'px';
+      });
+
+      // Inicializa
+      initSizes();
+
+      console.log('Painéis redimensionáveis inicializados!');
+      console.log('Arraste as barras cinzas entre os painéis para redimensionar.');
+    })();
+  </script>
+</body>
+</html>

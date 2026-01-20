@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Teste Martin Direto</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v10.7.0/ol.css">
+    <script src="https://cdn.jsdelivr.net/npm/ol@v10.7.0/dist/ol.js"></script>
+    <style>
+        body { margin: 0; }
+        #map { width: 100%; height: 100vh; }
+        #info { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.8); color: #fff; padding: 10px; font-family: monospace; font-size: 12px; z-index: 1000; }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <div>Martin direto: <span id="status">carregando...</span></div>
+        <div>Tiles: <span id="tiles">0</span></div>
+        <div>Erros: <span id="errors">0</span></div>
+        <div>Header: <span id="last-header">-</span></div>
+    </div>
+    <div id="map"></div>
+
+    <script>
+        const MARTIN_URL = 'http://localhost:3030';
+        let tilesLoaded = 0;
+        let tilesError = 0;
+
+        // URL da tile dinâmica (sem autenticação - direto no Martin)
+        const tileUrl = MARTIN_URL + '/get_dynamic_tile/{z}/{x}/{y}?' +
+            'schema=data_sys__055e5a53_1016_44df_9318_074f180f039d__&' +
+            'table=ubs_circuits&geom=geom&srid=4326&fields=id,code';
+
+        console.log('Tile URL template:', tileUrl);
+
+        // Criar source MVT - SEM autenticação, direto no Martin
+        // Usar tileLoadFunction para debug
+        const format = new ol.format.MVT();
+        const source = new ol.source.VectorTile({
+            format: format,
+            url: tileUrl,
+            maxZoom: 20,
+            cacheSize: 0,
+            tileLoadFunction: function(tile, src) {
+                console.log('Loading tile:', src);
+                tile.setLoader(function(extent, resolution, projection) {
+                    const xhr = new XMLHttpRequest();
+                    xhr.open('GET', src);
+                    xhr.responseType = 'arraybuffer';
+
+                    xhr.onload = function() {
+                        const data = xhr.response;
+                        console.log('Tile response:', xhr.status, data ? data.byteLength : 0, 'bytes');
+
+                        if (xhr.status === 200 && data && data.byteLength > 0) {
+                            const bytes = new Uint8Array(data);
+                            const header = Array.from(bytes.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                            console.log('Header:', header);
+                            document.getElementById('last-header').textContent = header;
+
+                            // Verificar se é gzip (1f 8b)
+                            if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
+                                console.error('ERRO: Tile está comprimida com gzip!');
+                                document.getElementById('status').textContent = 'GZIP ERROR!';
+                                document.getElementById('status').style.color = '#f44';
+                                tile.setFeatures([]);
+                                return;
+                            }
+
+                            try {
+                                const features = format.readFeatures(data, {
+                                    extent: extent,
+                                    featureProjection: projection
+                                });
+                                console.log('Features:', features.length);
+                                tile.setFeatures(features);
+                                tilesLoaded++;
+                                document.getElementById('tiles').textContent = tilesLoaded;
+                            } catch (e) {
+                                console.error('Parse error:', e);
+                                document.getElementById('status').textContent = 'PARSE ERROR';
+                                document.getElementById('status').style.color = '#f44';
+                                tile.setFeatures([]);
+                            }
+                        } else {
+                            tile.setFeatures([]);
+                        }
+                    };
+
+                    xhr.onerror = function() {
+                        console.error('XHR error');
+                        tilesError++;
+                        document.getElementById('errors').textContent = tilesError;
+                        tile.setFeatures([]);
+                    };
+
+                    xhr.send();
+                });
+            }
+        });
+
+        // Status já é atualizado no tileLoadFunction
+
+        // Layer com estilo
+        const vectorLayer = new ol.layer.VectorTile({
+            source: source,
+            style: new ol.style.Style({
+                stroke: new ol.style.Stroke({ color: '#e41a1c', width: 2 }),
+                fill: new ol.style.Fill({ color: 'rgba(228,26,28,0.3)' })
+            })
+        });
+
+        // Mapa centrado em Goiânia
+        const map = new ol.Map({
+            target: 'map',
+            layers: [
+                new ol.layer.Tile({ source: new ol.source.OSM() }),
+                vectorLayer
+            ],
+            view: new ol.View({
+                center: ol.proj.fromLonLat([-49.28, -16.68]),
+                zoom: 12
+            })
+        });
+
+        console.log('Mapa inicializado');
+    </script>
+</body>
+</html>

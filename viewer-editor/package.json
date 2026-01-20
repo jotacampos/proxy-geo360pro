@@ -1,0 +1,49 @@
+{
+  "name": "viewer-editor",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@deck.gl-community/editable-layers": "^9.1.1",
+    "@deck.gl/core": "^9.2.5",
+    "@deck.gl/geo-layers": "^9.2.5",
+    "@deck.gl/layers": "^9.2.5",
+    "@deck.gl/mapbox": "^9.2.5",
+    "@deck.gl/react": "^9.2.5",
+    "@headless-tree/core": "^1.6.2",
+    "@headless-tree/react": "^1.6.2",
+    "@turf/area": "^7.3.2",
+    "@turf/buffer": "^7.3.2",
+    "@turf/difference": "^7.3.2",
+    "@turf/distance": "^7.3.2",
+    "@turf/helpers": "^7.3.2",
+    "@turf/intersect": "^7.3.2",
+    "@turf/length": "^7.3.2",
+    "@turf/simplify": "^7.3.2",
+    "@turf/union": "^7.3.2",
+    "deck.gl": "^9.2.5",
+    "flexlayout-react": "^0.8.18",
+    "lucide-react": "^0.562.0",
+    "maplibre-gl": "^4.7.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-map-gl": "^7.1.9",
+    "zustand": "^5.0.10"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15",
+    "typescript": "~5.6.2",
+    "vite": "^6.0.3"
+  }
+}

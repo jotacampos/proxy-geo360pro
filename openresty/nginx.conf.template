@@ -1,0 +1,928 @@
+# =============================================================================
+# OpenResty Nginx Configuration - Dynamic Tiles Proxy
+# =============================================================================
+# Template com variáveis substituídas via envsubst no startup
+# Variáveis: ${MARTIN_URL}, ${MINIO_URL}, ${BACKEND_URL}
+# =============================================================================
+
+worker_processes auto;
+error_log /dev/stderr warn;
+pid /tmp/nginx.pid;
+
+events {
+    worker_connections 4096;
+    use epoll;
+    multi_accept on;
+}
+
+http {
+    include /usr/local/openresty/nginx/conf/mime.types;
+    default_type application/octet-stream;
+
+    # Logging
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for" '
+                    'rt=$request_time uct="$upstream_connect_time" '
+                    'uht="$upstream_header_time" urt="$upstream_response_time"';
+
+    access_log /dev/stdout main;
+
+    # Performance
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+
+    # Gzip
+    # NOTA: NÃO incluir application/vnd.mapbox-vector-tile aqui!
+    # Tiles MVT devem ser enviadas sem gzip para evitar problemas de parsing no browser
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css text/xml application/json application/javascript
+               application/xml application/xml+rss text/javascript;
+
+    # =========================================================================
+    # Shared Dicts
+    # =========================================================================
+    lua_shared_dict spatial_invalidations 10m;
+    lua_shared_dict jwt_cache 20m;  # Cache de validação JWT (~200k tokens)
+
+    # Lua package path
+    lua_package_path "/usr/local/openresty/nginx/lua/?.lua;;";
+
+    # =========================================================================
+    # Cache Zones
+    # =========================================================================
+    proxy_cache_path /tmp/tiles_cache levels=1:2
+        keys_zone=tiles_cache:100m max_size=10g
+        inactive=7d use_temp_path=off;
+
+    proxy_cache_path /tmp/storage_cache levels=1:2
+        keys_zone=storage_cache:50m max_size=5g
+        inactive=30d use_temp_path=off;
+
+    # Resolver para DNS dinâmico (Docker DNS)
+    resolver 127.0.0.11 valid=30s ipv6=off;
+
+    server {
+        listen 80;
+        server_name _;
+
+        # =====================================================================
+        # Health Check Global
+        # =====================================================================
+        location = /health {
+            content_by_lua_block {
+                local cjson = require("cjson")
+
+                local health = {
+                    status = "up",
+                    services = {
+                        martin = "${MARTIN_URL}",
+                        minio = "${MINIO_URL}",
+                        backend = "${BACKEND_URL}"
+                    }
+                }
+
+                ngx.header["Content-Type"] = "application/json"
+                ngx.say(cjson.encode(health))
+            }
+        }
+
+        # =====================================================================
+        # Debug: Auth Check (para testar se cookies estão sendo enviados)
+        # =====================================================================
+        location = /debug/auth {
+            content_by_lua_block {
+                local cjson = require("cjson")
+                local auth = require("auth")
+                local cors = require("cors")
+
+                cors.set_headers()
+
+                local token, source = auth.get_token()
+                local debug_info = {
+                    has_token = token ~= nil,
+                    token_source = source,
+                    token_preview = token and (token:sub(1, 20) .. "...") or nil,
+                    cookies_header = ngx.var.http_cookie and "present" or "missing",
+                    origin_header = ngx.req.get_headers()["Origin"] or "missing"
+                }
+
+                if token then
+                    local valid, user_info = auth.validate_token(token)
+                    debug_info.token_valid = valid
+                    debug_info.user_email = user_info and user_info.email or nil
+                end
+
+                ngx.header["Content-Type"] = "application/json"
+                ngx.say(cjson.encode(debug_info))
+            }
+        }
+
+        # =====================================================================
+        # Viewer (arquivos estáticos para desenvolvimento)
+        # =====================================================================
+        location /viewer {
+            alias /var/www/viewer;
+            index index.html;
+            try_files $uri $uri/ /viewer/index.html;
+
+            # CORS para desenvolvimento
+            add_header 'Access-Control-Allow-Origin' '*' always;
+            add_header 'Access-Control-Allow-Credentials' 'true' always;
+        }
+
+        # =====================================================================
+        # CORS Preflight - intercept OPTIONS requests
+        # =====================================================================
+        location = /cors_preflight {
+            internal;
+            content_by_lua_block {
+                -- Para suportar credentials, refletimos o Origin
+                local origin = ngx.req.get_headers()["Origin"]
+                ngx.header["Access-Control-Allow-Origin"] = origin or "*"
+                ngx.header["Access-Control-Allow-Credentials"] = "true"
+                ngx.header["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
+                ngx.header["Access-Control-Allow-Headers"] = "Origin, X-Requested-With, Content-Type, Accept, x-auth-token, x-tn-token, Authorization, X-Organization"
+                ngx.header["Access-Control-Max-Age"] = "86400"
+                ngx.header["Content-Type"] = "text/plain"
+                ngx.header["Content-Length"] = "0"
+                ngx.status = 204
+                ngx.exit(204)
+            }
+        }
+
+        # Handle OPTIONS at server level
+        if ($request_method = OPTIONS) {
+            rewrite ^ /cors_preflight last;
+        }
+
+        # =====================================================================
+        # Internal: Auth Validation (usado por access_by_lua)
+        # =====================================================================
+        location = /@auth_me {
+            internal;
+            set $backend_url "${BACKEND_URL}";
+            set $backend_host "${BACKEND_HOST}";
+
+            # Pega o token do contexto Lua
+            set_by_lua_block $auth_cookie {
+                return ngx.ctx._auth_token or ""
+            }
+
+            proxy_pass $backend_url/api/auth/me;
+            proxy_http_version 1.1;
+            proxy_set_header Host $backend_host;
+            proxy_set_header Cookie "jwt-access-cookie=$auth_cookie";
+            proxy_set_header Connection "";
+
+            # Timeouts curtos para validação
+            proxy_connect_timeout 5s;
+            proxy_send_timeout 10s;
+            proxy_read_timeout 10s;
+        }
+
+        # =====================================================================
+        # Backend API
+        # =====================================================================
+        location /api/ {
+            # Autenticação JWT + X-Organization + marca para invalidação
+            access_by_lua_block {
+                local auth = require("auth")
+                auth.require_auth_and_org()
+                auth.mark_for_invalidation_check()
+            }
+
+            set $backend_url "${BACKEND_URL}";
+            set $backend_host "${BACKEND_HOST}";
+            # Com variáveis no proxy_pass, nginx não substitui URI automaticamente
+            # Usamos $request_uri para passar o caminho completo
+            proxy_pass $backend_url$request_uri;
+            proxy_http_version 1.1;
+            proxy_set_header Host $backend_host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header Connection "";
+            # Importante: encaminhar cookies para o backend
+            proxy_set_header Cookie $http_cookie;
+
+            proxy_connect_timeout 30s;
+            proxy_send_timeout 60s;
+            proxy_read_timeout 60s;
+
+            # CORS com credentials requer origem específica, não '*'
+            set_by_lua_block $cors_origin {
+                return ngx.var.http_origin or "http://localhost:8081"
+            }
+            add_header 'Access-Control-Allow-Origin' $cors_origin always;
+            add_header 'Access-Control-Allow-Credentials' 'true' always;
+
+            # DEV: Ajusta cookies para funcionar em HTTP localhost
+            # Remove "Secure" e troca "SameSite=none" por "SameSite=Lax"
+            # Em produção com HTTPS, isso não é necessário
+            header_filter_by_lua_block {
+                local cookies = ngx.header["Set-Cookie"]
+                if cookies then
+                    local function fix_cookie(cookie)
+                        -- Remove Secure
+                        cookie = cookie:gsub("; Secure", ""):gsub(";Secure", "")
+                        -- Troca SameSite=none por SameSite=Lax (none requer Secure)
+                        cookie = cookie:gsub("SameSite=none", "SameSite=Lax")
+                        cookie = cookie:gsub("SameSite=None", "SameSite=Lax")
+                        return cookie
+                    end
+
+                    if type(cookies) == "table" then
+                        for i, cookie in ipairs(cookies) do
+                            cookies[i] = fix_cookie(cookie)
+                        end
+                    else
+                        cookies = fix_cookie(cookies)
+                    end
+                    ngx.header["Set-Cookie"] = cookies
+                end
+            }
+
+            # Invalida cache do token após logout/change-password/etc
+            log_by_lua_block {
+                local auth = require("auth")
+                auth.check_and_invalidate()
+            }
+        }
+
+        # =====================================================================
+        # Tiles Dinâmicas
+        # =====================================================================
+        location ~ ^/tiles/dynamic/(\d+)/(\d+)/(\d+)(\.pbf)?$ {
+            # Desabilitar gzip para evitar problemas com CORS + fetch
+            gzip off;
+
+            # Autenticação JWT
+            access_by_lua_block {
+                local auth = require("auth")
+                auth.require_auth()
+            }
+
+            set $z $1;
+            set $x $2;
+            set $y $3;
+
+            # Extrai schema para cache key
+            set_by_lua_block $dyn_schema {
+                return ngx.var.arg_schema or "cadastro"
+            }
+
+            # Verifica bypass de cache
+            set $bypass_cache 0;
+            if ($arg_nocache = "1") {
+                set $bypass_cache 1;
+            }
+            if ($arg_fresh = "1") {
+                set $bypass_cache 1;
+            }
+
+            # Cache key inclui schema, table e fields
+            set $cache_key "dynamic:$dyn_schema:$arg_table:$arg_fields:$z:$x:$y";
+
+            # Bypass cache se solicitado
+            if ($bypass_cache = "1") {
+                rewrite ^ /@dynamic_bypass/$z/$x/$y last;
+            }
+
+            # Request normal com ETag e cache
+            content_by_lua_block {
+                local etag = require("etag_dynamic")
+                local cache_inv = require("cache_invalidation")
+                local cors = require("cors")
+
+                cors.set_headers()
+
+                local z = ngx.var.z
+                local x = ngx.var.x
+                local y = ngx.var.y
+
+                local args = string.format(
+                    "schema=%s&table=%s&geom=%s&srid=%s&fields=%s",
+                    ngx.var.arg_schema or "cadastro",
+                    ngx.var.arg_table or "",
+                    ngx.var.arg_geom or "",
+                    ngx.var.arg_srid or "",
+                    ngx.var.arg_fields or ""
+                )
+
+                local request_start = ngx.now()
+                local internal_uri = string.format("/@martin_dynamic_internal/%s/%s/%s", z, x, y)
+                etag.fetch_with_etag(internal_uri, args)
+
+                -- Verifica se deve cachear (spatial invalidation)
+                local should_cache = cache_inv.should_cache_dynamic(
+                    ngx.var.arg_schema or "cadastro",
+                    ngx.var.arg_table or "",
+                    ngx.var.arg_fields or "",
+                    tonumber(ngx.var.z),
+                    tonumber(ngx.var.x),
+                    tonumber(ngx.var.y),
+                    request_start
+                )
+
+                if not should_cache then
+                    ngx.header["X-Cache-Skipped"] = "spatial-invalidation"
+                end
+            }
+
+            add_header X-Cache-Key $cache_key always;
+        }
+
+        # =====================================================================
+        # Tiles Dinâmicas OTIMIZADAS (com simplificação por zoom)
+        # =====================================================================
+        location ~ ^/tiles/dynamic-optimized/(\d+)/(\d+)/(\d+)(\.pbf)?$ {
+            gzip off;
+
+            # Autenticação JWT
+            access_by_lua_block {
+                local auth = require("auth")
+                auth.require_auth()
+            }
+
+            set $z $1;
+            set $x $2;
+            set $y $3;
+
+            set_by_lua_block $dyn_schema {
+                return ngx.var.arg_schema or "cadastro"
+            }
+
+            set $cache_key "dynamic-opt:$dyn_schema:$arg_table:$arg_fields:$z:$x:$y";
+
+            content_by_lua_block {
+                local etag = require("etag_dynamic")
+                local cors = require("cors")
+
+                cors.set_headers()
+
+                local z = ngx.var.z
+                local x = ngx.var.x
+                local y = ngx.var.y
+
+                local args = string.format(
+                    "schema=%s&table=%s&geom=%s&srid=%s&fields=%s",
+                    ngx.var.arg_schema or "cadastro",
+                    ngx.var.arg_table or "",
+                    ngx.var.arg_geom or "",
+                    ngx.var.arg_srid or "",
+                    ngx.var.arg_fields or ""
+                )
+
+                local internal_uri = string.format("/@martin_dynamic_optimized/%s/%s/%s", z, x, y)
+                etag.fetch_with_etag(internal_uri, args)
+            }
+
+            add_header X-Cache-Key $cache_key always;
+            add_header X-Tile-Optimized "true" always;
+        }
+
+        location ~ ^/@dynamic_bypass/(\d+)/(\d+)/(\d+)$ {
+            internal;
+            set $z $1;
+            set $x $2;
+            set $y $3;
+
+            content_by_lua_block {
+                local etag = require("etag_dynamic")
+                local cors = require("cors")
+
+                cors.set_headers()
+
+                local z = ngx.var.z
+                local x = ngx.var.x
+                local y = ngx.var.y
+
+                local args = string.format(
+                    "schema=%s&table=%s&geom=%s&srid=%s&fields=%s",
+                    ngx.var.arg_schema or "cadastro",
+                    ngx.var.arg_table or "",
+                    ngx.var.arg_geom or "",
+                    ngx.var.arg_srid or "",
+                    ngx.var.arg_fields or ""
+                )
+                local internal_uri = string.format("/@martin_dynamic_internal/%s/%s/%s", z, x, y)
+                etag.fetch_bypass(internal_uri, args)
+            }
+        }
+
+        # Internal location para Martin (tiles dinâmicas)
+        location ~ ^/@martin_dynamic_internal/(\d+)/(\d+)/(\d+)$ {
+            internal;
+            gzip off;  # Desabilitar gzip neste location também
+
+            set $z $1;
+            set $x $2;
+            set $y $3;
+            set $martin_url "${MARTIN_URL}";
+
+            # Cache key gerada a partir dos args
+            set_by_lua_block $internal_cache_key {
+                local schema = ngx.var.arg_schema or "cadastro"
+                local tbl = ngx.var.arg_table or ""
+                local fields = ngx.var.arg_fields or ""
+                return string.format("dynamic:%s:%s:%s:%s:%s:%s", schema, tbl, fields, ngx.var.z, ngx.var.x, ngx.var.y)
+            }
+
+            proxy_pass $martin_url/get_dynamic_tile/$z/$x/$y?$args;
+            proxy_cache tiles_cache;
+            proxy_cache_key $internal_cache_key;
+            proxy_cache_valid 200 7d;
+            proxy_cache_valid 204 1h;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Accept-Encoding "";  # Não pedir gzip ao Martin
+        }
+
+        # Internal location para Martin (tiles dinâmicas OTIMIZADAS)
+        location ~ ^/@martin_dynamic_optimized/(\d+)/(\d+)/(\d+)$ {
+            internal;
+            gzip off;
+
+            set $z $1;
+            set $x $2;
+            set $y $3;
+            set $martin_url "${MARTIN_URL}";
+
+            set_by_lua_block $internal_cache_key {
+                local schema = ngx.var.arg_schema or "cadastro"
+                local tbl = ngx.var.arg_table or ""
+                local fields = ngx.var.arg_fields or ""
+                return string.format("dynamic-opt:%s:%s:%s:%s:%s:%s", schema, tbl, fields, ngx.var.z, ngx.var.x, ngx.var.y)
+            }
+
+            # Usa função otimizada get_dynamic_tile_simplify
+            proxy_pass $martin_url/get_dynamic_tile_simplify/$z/$x/$y?$args;
+            proxy_cache tiles_cache;
+            proxy_cache_key $internal_cache_key;
+            proxy_cache_valid 200 7d;
+            proxy_cache_valid 204 1h;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Accept-Encoding "";
+        }
+
+        # =====================================================================
+        # Tiles Dinâmicas com INTERSEÇÃO de duas camadas
+        # =====================================================================
+        location ~ ^/tiles/dynamic-intersection/(\d+)/(\d+)/(\d+)(\.pbf)?$ {
+            gzip off;
+
+            # Autenticação JWT
+            access_by_lua_block {
+                local auth = require("auth")
+                auth.require_auth()
+            }
+
+            set $z $1;
+            set $x $2;
+            set $y $3;
+
+            set_by_lua_block $dyn_schema1 {
+                return ngx.var.arg_schema1 or "cadastro"
+            }
+
+            set $cache_key "dynamic-int:$dyn_schema1:$arg_table1:$arg_schema2:$arg_table2:$z:$x:$y";
+
+            content_by_lua_block {
+                local etag = require("etag_dynamic")
+                local cors = require("cors")
+
+                cors.set_headers()
+
+                local z = ngx.var.z
+                local x = ngx.var.x
+                local y = ngx.var.y
+                local nocache = ngx.var.arg_nocache == "1"
+
+                -- Monta args para ambas as camadas
+                local args = string.format(
+                    "schema1=%s&table1=%s&geom1=%s&srid1=%s&fields1=%s&schema2=%s&table2=%s&geom2=%s&srid2=%s&fields2=%s&layer_name=%s",
+                    ngx.var.arg_schema1 or "cadastro",
+                    ngx.var.arg_table1 or "",
+                    ngx.var.arg_geom1 or "",
+                    ngx.var.arg_srid1 or "",
+                    ngx.var.arg_fields1 or "",
+                    ngx.var.arg_schema2 or "cadastro",
+                    ngx.var.arg_table2 or "",
+                    ngx.var.arg_geom2 or "",
+                    ngx.var.arg_srid2 or "",
+                    ngx.var.arg_fields2 or "",
+                    ngx.var.arg_layer_name or "intersection"
+                )
+
+                if nocache then
+                    local internal_uri = string.format("/@martin_dynamic_intersection_nocache/%s/%s/%s", z, x, y)
+                    etag.fetch_bypass(internal_uri, args)
+                else
+                    local internal_uri = string.format("/@martin_dynamic_intersection/%s/%s/%s", z, x, y)
+                    etag.fetch_with_etag(internal_uri, args)
+                end
+            }
+
+            add_header X-Cache-Key $cache_key always;
+            add_header X-Tile-Intersection "true" always;
+        }
+
+        # Internal location para Martin (tiles dinâmicas INTERSEÇÃO - com cache)
+        location ~ ^/@martin_dynamic_intersection/(\d+)/(\d+)/(\d+)$ {
+            internal;
+            gzip off;
+
+            set $z $1;
+            set $x $2;
+            set $y $3;
+            set $martin_url "${MARTIN_URL}";
+
+            set_by_lua_block $internal_cache_key {
+                local schema1 = ngx.var.arg_schema1 or "cadastro"
+                local table1 = ngx.var.arg_table1 or ""
+                local schema2 = ngx.var.arg_schema2 or "cadastro"
+                local table2 = ngx.var.arg_table2 or ""
+                return string.format("dynamic-int:%s:%s:%s:%s:%s:%s:%s", schema1, table1, schema2, table2, ngx.var.z, ngx.var.x, ngx.var.y)
+            }
+
+            # Usa função get_dynamic_tile_intersection
+            proxy_pass $martin_url/get_dynamic_tile_intersection/$z/$x/$y?$args;
+            proxy_cache tiles_cache;
+            proxy_cache_key $internal_cache_key;
+            proxy_cache_valid 200 7d;
+            proxy_cache_valid 204 1h;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Accept-Encoding "";
+        }
+
+        # Internal location para Martin (tiles dinâmicas INTERSEÇÃO - SEM cache)
+        location ~ ^/@martin_dynamic_intersection_nocache/(\d+)/(\d+)/(\d+)$ {
+            internal;
+            gzip off;
+
+            set $z $1;
+            set $x $2;
+            set $y $3;
+            set $martin_url "${MARTIN_URL}";
+
+            # Sem cache - passa direto para Martin
+            proxy_pass $martin_url/get_dynamic_tile_intersection/$z/$x/$y?$args;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Accept-Encoding "";
+
+            # Headers para indicar no-cache
+            add_header X-Cache-Status "BYPASS" always;
+        }
+
+        # =====================================================================
+        # Tiles Dinâmicas com BUFFER
+        # =====================================================================
+        location ~ ^/tiles/dynamic-buffer/(\d+)/(\d+)/(\d+)(\.pbf)?$ {
+            gzip off;
+
+            # Autenticação JWT
+            access_by_lua_block {
+                local auth = require("auth")
+                auth.require_auth()
+            }
+
+            set $z $1;
+            set $x $2;
+            set $y $3;
+
+            set_by_lua_block $dyn_schema {
+                return ngx.var.arg_schema or "cadastro"
+            }
+
+            set $cache_key "dynamic-buf:$dyn_schema:$arg_table:$arg_buffer_meters:$z:$x:$y";
+
+            content_by_lua_block {
+                local etag = require("etag_dynamic")
+                local cors = require("cors")
+
+                cors.set_headers()
+
+                local z = ngx.var.z
+                local x = ngx.var.x
+                local y = ngx.var.y
+                local nocache = ngx.var.arg_nocache == "1"
+
+                -- Monta args para buffer
+                local args = string.format(
+                    "schema=%s&table=%s&geom=%s&srid=%s&fields=%s&buffer_meters=%s&buffer_segments=%s&dissolve=%s&layer_name=%s",
+                    ngx.var.arg_schema or "cadastro",
+                    ngx.var.arg_table or "",
+                    ngx.var.arg_geom or "",
+                    ngx.var.arg_srid or "",
+                    ngx.var.arg_fields or "",
+                    ngx.var.arg_buffer_meters or "100",
+                    ngx.var.arg_buffer_segments or "8",
+                    ngx.var.arg_dissolve or "false",
+                    ngx.var.arg_layer_name or "buffer"
+                )
+
+                local internal_uri = string.format("/@martin_dynamic_buffer_nocache/%s/%s/%s", z, x, y)
+                if nocache then
+                    etag.fetch_bypass(internal_uri, args)
+                else
+                    internal_uri = string.format("/@martin_dynamic_buffer/%s/%s/%s", z, x, y)
+                    etag.fetch_with_etag(internal_uri, args)
+                end
+            }
+
+            add_header X-Cache-Key $cache_key always;
+            add_header X-Tile-Buffer "true" always;
+        }
+
+        # Internal location para Martin (tiles dinâmicas BUFFER - com cache)
+        location ~ ^/@martin_dynamic_buffer/(\d+)/(\d+)/(\d+)$ {
+            internal;
+            gzip off;
+
+            set $z $1;
+            set $x $2;
+            set $y $3;
+            set $martin_url "${MARTIN_URL}";
+
+            set_by_lua_block $internal_cache_key {
+                local schema = ngx.var.arg_schema or "cadastro"
+                local tbl = ngx.var.arg_table or ""
+                local buffer = ngx.var.arg_buffer_meters or "100"
+                return string.format("dynamic-buf:%s:%s:%s:%s:%s:%s", schema, tbl, buffer, ngx.var.z, ngx.var.x, ngx.var.y)
+            }
+
+            # Usa função get_dynamic_tile_buffer
+            proxy_pass $martin_url/get_dynamic_tile_buffer/$z/$x/$y?$args;
+            proxy_cache tiles_cache;
+            proxy_cache_key $internal_cache_key;
+            proxy_cache_valid 200 7d;
+            proxy_cache_valid 204 1h;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Accept-Encoding "";
+        }
+
+        # Internal location para Martin (tiles dinâmicas BUFFER - SEM cache)
+        location ~ ^/@martin_dynamic_buffer_nocache/(\d+)/(\d+)/(\d+)$ {
+            internal;
+            gzip off;
+
+            set $z $1;
+            set $x $2;
+            set $y $3;
+            set $martin_url "${MARTIN_URL}";
+
+            # Sem cache - passa direto para Martin
+            proxy_pass $martin_url/get_dynamic_tile_buffer/$z/$x/$y?$args;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Accept-Encoding "";
+
+            # Headers para indicar no-cache
+            add_header X-Cache-Status "BYPASS" always;
+        }
+
+        # =====================================================================
+        # Tiles Estáticas (municipio/layer)
+        # =====================================================================
+        location ~ ^/tiles/([^/]+)/([^/]+)/(\d+)/(\d+)/(\d+)\.pbf$ {
+            # Autenticação JWT
+            access_by_lua_block {
+                local auth = require("auth")
+                auth.require_auth()
+            }
+
+            set $municipio $1;
+            set $layer $2;
+            set $z $3;
+            set $x $4;
+            set $y $5;
+
+            set $cache_key "$municipio:$layer:$z:$x:$y";
+            set $martin_url "${MARTIN_URL}";
+
+            proxy_pass $martin_url/$municipio.$layer/$z/$x/$y.pbf;
+            proxy_cache tiles_cache;
+            proxy_cache_key $cache_key;
+            proxy_cache_valid 200 7d;
+            proxy_cache_valid 204 1h;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+
+            add_header X-Cache-Status $upstream_cache_status always;
+            add_header X-Cache-Key $cache_key always;
+            add_header 'Access-Control-Allow-Origin' '*' always;
+        }
+
+        # =====================================================================
+        # Cache Purge - Tiles
+        # =====================================================================
+
+        # Purge dynamic por tabela
+        location ~ ^/tiles/cache/purge/dynamic/([^/]+)/([^/]+)$ {
+            # Autenticação JWT
+            access_by_lua_block {
+                local auth = require("auth")
+                auth.require_auth()
+            }
+
+            set $purge_schema $1;
+            set $purge_table $2;
+
+            content_by_lua_block {
+                local purge = require("cache_purge_dynamic")
+                local cjson = require("cjson")
+                local cors = require("cors")
+
+                cors.set_headers()
+
+                local ok, result = purge.purge_table(ngx.var.purge_schema, ngx.var.purge_table)
+
+                ngx.header["Content-Type"] = "application/json"
+                if ok then
+                    ngx.say(cjson.encode({ success = true, result = result }))
+                else
+                    ngx.status = 400
+                    ngx.say(cjson.encode({ success = false, error = result }))
+                end
+            }
+        }
+
+        # Purge dynamic por bbox
+        location = /tiles/cache/purge/dynamic/bbox {
+            # Autenticação JWT
+            access_by_lua_block {
+                local auth = require("auth")
+                auth.require_auth()
+            }
+
+            content_by_lua_block {
+                local purge = require("cache_purge_dynamic")
+                local cjson = require("cjson")
+                local cors = require("cors")
+
+                cors.set_headers()
+
+                ngx.req.read_body()
+                local body = ngx.req.get_body_data()
+
+                if not body then
+                    ngx.status = 400
+                    ngx.header["Content-Type"] = "application/json"
+                    ngx.say(cjson.encode({ success = false, error = "body vazio" }))
+                    return
+                end
+
+                local ok_parse, data = pcall(cjson.decode, body)
+                if not ok_parse then
+                    ngx.status = 400
+                    ngx.header["Content-Type"] = "application/json"
+                    ngx.say(cjson.encode({ success = false, error = "JSON inválido" }))
+                    return
+                end
+
+                local ok, result = purge.purge_bbox(
+                    data.schema,
+                    data.table,
+                    data.fields,
+                    data.bbox,
+                    data.min_zoom,
+                    data.max_zoom
+                )
+
+                ngx.header["Content-Type"] = "application/json"
+                if ok then
+                    ngx.say(cjson.encode({ success = true, result = result }))
+                else
+                    ngx.status = 400
+                    ngx.say(cjson.encode({ success = false, error = result.error }))
+                end
+            }
+        }
+
+        # Stats do cache JWT (autenticação)
+        location = /auth/cache/stats {
+            # Autenticação JWT
+            access_by_lua_block {
+                local auth = require("auth")
+                auth.require_auth()
+            }
+
+            content_by_lua_block {
+                local auth = require("auth")
+                local cjson = require("cjson")
+                local cors = require("cors")
+
+                cors.set_headers()
+
+                ngx.header["Content-Type"] = "application/json"
+                ngx.say(cjson.encode(auth.cache_stats()))
+            }
+        }
+
+        # Stats do cache de tiles
+        location = /tiles/cache/stats {
+            # Autenticação JWT
+            access_by_lua_block {
+                local auth = require("auth")
+                auth.require_auth()
+            }
+
+            content_by_lua_block {
+                local purge = require("cache_purge_dynamic")
+                local cache_inv = require("cache_invalidation")
+                local cjson = require("cjson")
+                local cors = require("cors")
+
+                cors.set_headers()
+
+                local cache_stats = purge.stats()
+                local invalidation_stats = cache_inv.stats()
+
+                ngx.header["Content-Type"] = "application/json"
+                ngx.say(cjson.encode({
+                    cache = cache_stats,
+                    invalidations = invalidation_stats
+                }))
+            }
+        }
+
+        # =====================================================================
+        # Storage (MinIO)
+        # =====================================================================
+
+        # Purge storage por bucket (must come before general storage route)
+        location ~ ^/storage/cache/purge/([^/]+)$ {
+            # Autenticação JWT
+            access_by_lua_block {
+                local auth = require("auth")
+                auth.require_auth()
+            }
+
+            set $purge_bucket $1;
+
+            content_by_lua_block {
+                local cjson = require("cjson")
+                local cors = require("cors")
+
+                cors.set_headers()
+
+                -- TODO: Implementar purge de storage
+                ngx.header["Content-Type"] = "application/json"
+                ngx.say(cjson.encode({
+                    success = true,
+                    message = "storage purge not implemented yet",
+                    bucket = ngx.var.purge_bucket
+                }))
+            }
+        }
+
+        # General storage proxy
+        location ~ ^/storage/(.*)$ {
+            # Autenticação JWT
+            access_by_lua_block {
+                local auth = require("auth")
+                auth.require_auth()
+            }
+
+            set $minio_url "${MINIO_URL}";
+            set $storage_path $1;
+            proxy_pass $minio_url/$storage_path;
+            proxy_cache storage_cache;
+            proxy_cache_valid 200 30d;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header Connection "";
+
+            add_header X-Cache-Status $upstream_cache_status always;
+            add_header 'Access-Control-Allow-Origin' '*' always;
+        }
+
+        # =====================================================================
+        # Error Pages
+        # =====================================================================
+        error_page 500 502 503 504 /50x.html;
+        location = /50x.html {
+            internal;
+            content_by_lua_block {
+                local cjson = require("cjson")
+                ngx.header["Content-Type"] = "application/json"
+                ngx.say(cjson.encode({
+                    error = "upstream_error",
+                    status = ngx.status,
+                    message = "Serviço temporariamente indisponível"
+                }))
+            }
+        }
+    }
+}

@@ -1,0 +1,1786 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geo360 Viewer</title>
+
+    <!-- OpenLayers (mesma versão do api-gateway) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v10.7.0/ol.css">
+    <script src="https://cdn.jsdelivr.net/npm/ol@v10.7.0/dist/ol.js"></script>
+
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+        }
+
+        .view { display: none; min-height: 100vh; }
+        .view.active { display: flex; }
+
+        /* Login */
+        #login-view { justify-content: center; align-items: center; }
+        .login-box {
+            background: #16213e;
+            padding: 40px;
+            border-radius: 12px;
+            width: 100%;
+            max-width: 400px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+        .login-box h1 { text-align: center; margin-bottom: 30px; color: #4ecca3; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; margin-bottom: 8px; color: #aaa; font-size: 14px; }
+        .form-group input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid #333;
+            border-radius: 8px;
+            background: #0f0f23;
+            color: #fff;
+            font-size: 16px;
+        }
+        .form-group input:focus { outline: none; border-color: #4ecca3; }
+        .btn {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .btn-primary { background: #4ecca3; color: #1a1a2e; font-weight: 600; }
+        .btn-primary:hover { background: #3db892; }
+        .btn-secondary { background: #333; color: #fff; margin-top: 10px; }
+        .error-msg {
+            background: #ff4757;
+            color: #fff;
+            padding: 10px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        /* Organização */
+        #org-view { justify-content: center; align-items: center; }
+        .org-box {
+            background: #16213e;
+            padding: 40px;
+            border-radius: 12px;
+            width: 100%;
+            max-width: 500px;
+        }
+        .org-box h2 { text-align: center; margin-bottom: 30px; color: #4ecca3; }
+        .org-list { list-style: none; }
+        .org-item {
+            padding: 16px 20px;
+            background: #0f0f23;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: all 0.3s;
+        }
+        .org-item:hover { border-color: #4ecca3; background: #1a1a3e; }
+        .org-item .org-name { font-weight: 600; font-size: 16px; }
+        .org-item .org-id { font-size: 12px; color: #666; margin-top: 4px; font-family: monospace; }
+
+        /* Map View */
+        #map-view { flex-direction: column; }
+        .header {
+            background: #16213e;
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #333;
+        }
+        .header-left { display: flex; align-items: center; gap: 20px; }
+        .header h1 { font-size: 18px; color: #4ecca3; }
+        .header .org-badge {
+            background: #4ecca3;
+            color: #1a1a2e;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .header-right { display: flex; gap: 10px; }
+        .btn-small {
+            padding: 8px 16px;
+            font-size: 14px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            background: #333;
+            color: #fff;
+        }
+        .btn-small:hover { background: #444; }
+        .main-content { display: flex; flex: 1; overflow: hidden; }
+
+        /* Sidebar */
+        .sidebar {
+            width: 350px;
+            background: #16213e;
+            border-right: 1px solid #333;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .sidebar-header {
+            padding: 16px;
+            border-bottom: 1px solid #333;
+        }
+        .sidebar-header h3 {
+            font-size: 14px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .layers-list { flex: 1; overflow-y: auto; padding: 12px; }
+        .layer-item {
+            background: #0f0f23;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            overflow: hidden;
+        }
+        .layer-header {
+            padding: 12px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            cursor: pointer;
+        }
+        .layer-header:hover { background: #1a1a3e; }
+        .layer-checkbox { width: 20px; height: 20px; cursor: pointer; accent-color: #4ecca3; }
+        .layer-info { flex: 1; }
+        .layer-name { font-weight: 500; font-size: 14px; }
+        .layer-meta { font-size: 11px; color: #666; margin-top: 2px; }
+        .layer-details {
+            display: none;
+            padding: 12px;
+            border-top: 1px solid #333;
+            background: #0a0a1a;
+            font-size: 12px;
+        }
+        .layer-item.expanded .layer-details { display: block; }
+        .field-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+        .field-tag {
+            background: #333;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-family: monospace;
+        }
+        .field-tag.geom { background: #4ecca3; color: #1a1a2e; }
+
+        /* Map */
+        .map-container { flex: 1; position: relative; }
+        #map { width: 100%; height: 100%; background: #0a0a1a; }
+        .map-info {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(22, 33, 62, 0.95);
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-family: monospace;
+        }
+        .debug-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(22, 33, 62, 0.95);
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 11px;
+            font-family: monospace;
+            max-width: 400px;
+            max-height: 300px;
+            overflow: auto;
+        }
+        .debug-panel h4 { color: #4ecca3; margin-bottom: 8px; }
+        .debug-url { word-break: break-all; color: #888; }
+
+        /* Loading */
+        .loading {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .loading.active { display: flex; }
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid #333;
+            border-top-color: #4ecca3;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Feature Info Popup */
+        .feature-popup {
+            position: absolute;
+            background: rgba(22, 33, 62, 0.98);
+            border: 1px solid #4ecca3;
+            border-radius: 8px;
+            padding: 0;
+            min-width: 280px;
+            max-width: 400px;
+            max-height: 350px;
+            z-index: 100;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            display: none;
+        }
+        .feature-popup.active { display: block; }
+        .feature-popup-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 12px;
+            background: #4ecca3;
+            color: #1a1a2e;
+            border-radius: 7px 7px 0 0;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        .feature-popup-close {
+            background: none;
+            border: none;
+            color: #1a1a2e;
+            font-size: 18px;
+            cursor: pointer;
+            padding: 0 4px;
+            line-height: 1;
+        }
+        .feature-popup-close:hover { opacity: 0.7; }
+        .feature-popup-content {
+            padding: 12px;
+            max-height: 280px;
+            overflow-y: auto;
+            font-size: 12px;
+        }
+        .feature-popup-content::-webkit-scrollbar { width: 6px; }
+        .feature-popup-content::-webkit-scrollbar-track { background: #0f0f23; }
+        .feature-popup-content::-webkit-scrollbar-thumb { background: #4ecca3; border-radius: 3px; }
+        .feature-attr {
+            display: flex;
+            padding: 6px 0;
+            border-bottom: 1px solid #333;
+        }
+        .feature-attr:last-child { border-bottom: none; }
+        .feature-attr-key {
+            flex: 0 0 120px;
+            color: #4ecca3;
+            font-weight: 500;
+            font-family: monospace;
+            font-size: 11px;
+            word-break: break-all;
+        }
+        .feature-attr-value {
+            flex: 1;
+            color: #eee;
+            word-break: break-word;
+        }
+        .feature-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background: #0f0f23;
+            border-top: 1px solid #333;
+            font-size: 11px;
+            color: #888;
+        }
+        .feature-nav button {
+            background: #333;
+            border: none;
+            color: #fff;
+            padding: 4px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+        .feature-nav button:hover { background: #4ecca3; color: #1a1a2e; }
+        .feature-nav button:disabled { opacity: 0.3; cursor: not-allowed; }
+
+        /* Identify Tool Button */
+        .tool-btn {
+            padding: 8px 14px;
+            font-size: 13px;
+            border-radius: 6px;
+            border: 2px solid transparent;
+            cursor: pointer;
+            background: #333;
+            color: #fff;
+            transition: all 0.2s;
+        }
+        .tool-btn:hover { background: #444; }
+        .tool-btn.active {
+            background: #4ecca3;
+            color: #1a1a2e;
+            border-color: #3db892;
+        }
+    </style>
+</head>
+<body>
+    <div class="loading" id="loading"><div class="spinner"></div></div>
+
+    <!-- Login View -->
+    <div class="view active" id="login-view">
+        <div class="login-box">
+            <h1>Geo360 Viewer</h1>
+            <div class="error-msg" id="login-error"></div>
+            <form id="login-form">
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="email" value="suporte@geo360.com.br" required>
+                </div>
+                <div class="form-group">
+                    <label>Senha</label>
+                    <input type="password" id="password" value="123456Geo!" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Entrar</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Organization Selection View -->
+    <div class="view" id="org-view">
+        <div class="org-box">
+            <h2>Selecione a Organização</h2>
+            <ul class="org-list" id="org-list"></ul>
+            <button class="btn btn-secondary" onclick="logout()">Voltar</button>
+        </div>
+    </div>
+
+    <!-- Map View -->
+    <div class="view" id="map-view">
+        <div class="header">
+            <div class="header-left">
+                <h1>Geo360 Viewer</h1>
+                <span class="org-badge" id="current-org-name">-</span>
+            </div>
+            <div class="header-right">
+                <button class="tool-btn" id="identify-btn" onclick="toggleIdentifyTool()" title="Identificar features (clique no mapa)">
+                    <span style="margin-right: 4px;">&#128269;</span> Identificar
+                </button>
+                <button class="btn-small" onclick="refreshAllLayers()" title="Recarregar todas as camadas (Ctrl+R)">
+                    ↻ Refresh
+                </button>
+                <button class="btn-small" onclick="changeOrg()">Trocar Org</button>
+                <button class="btn-small" onclick="logout()">Sair</button>
+            </div>
+        </div>
+        <div class="main-content">
+            <div class="sidebar">
+                <div class="sidebar-header">
+                    <h3>Camadas Espaciais</h3>
+                </div>
+                <div class="layers-list" id="layers-list"></div>
+
+                <!-- Seção de Teste Manual -->
+                <div style="padding: 12px; border-top: 1px solid #333;">
+                    <h4 style="color: #4ecca3; margin-bottom: 10px; font-size: 12px;">TESTE MANUAL</h4>
+                    <div style="display: flex; flex-direction: column; gap: 6px; font-size: 11px;">
+                        <input type="text" id="test-schema" placeholder="schema (ex: ctm)" value="ctm"
+                               style="padding: 6px; background: #0f0f23; border: 1px solid #333; border-radius: 4px; color: #fff;">
+                        <input type="text" id="test-table" placeholder="tabela" value="cdo_quadra"
+                               style="padding: 6px; background: #0f0f23; border: 1px solid #333; border-radius: 4px; color: #fff;">
+                        <input type="text" id="test-geom" placeholder="coluna geom" value="geom"
+                               style="padding: 6px; background: #0f0f23; border: 1px solid #333; border-radius: 4px; color: #fff;">
+                        <div style="display: flex; gap: 6px;">
+                            <button onclick="addTestLayer(false)"
+                                    style="flex:1; padding: 8px; background: #333; border: none; border-radius: 4px; color: #fff; cursor: pointer;">
+                                Original
+                            </button>
+                            <button onclick="addTestLayer(true)"
+                                    style="flex:1; padding: 8px; background: #4ecca3; border: none; border-radius: 4px; color: #000; cursor: pointer; font-weight: 600;">
+                                Otimizada
+                            </button>
+                        </div>
+                        <div style="display: flex; gap: 4px; align-items: center;">
+                            <label style="display: flex; align-items: center; gap: 4px; cursor: pointer; flex: 1;">
+                                <input type="checkbox" id="test-nocache" style="accent-color: #ff6b6b;">
+                                <span style="color: #ff6b6b; font-size: 10px;">No Cache</span>
+                            </label>
+                            <button onclick="refreshTestLayers()"
+                                    style="padding: 6px 10px; background: #5352ed; border: none; border-radius: 4px; color: #fff; cursor: pointer; font-size: 10px;"
+                                    title="Recarregar todas as camadas de teste">
+                                ↻
+                            </button>
+                            <button onclick="clearTestLayers()"
+                                    style="padding: 6px 10px; background: #ff4757; border: none; border-radius: 4px; color: #fff; cursor: pointer; font-size: 10px;">
+                                Limpar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Seção de Teste INTERSEÇÃO -->
+                <div style="padding: 12px; border-top: 1px solid #333;">
+                    <h4 style="color: #ff6b6b; margin-bottom: 10px; font-size: 12px;">TESTE INTERSEÇÃO</h4>
+                    <div style="display: flex; flex-direction: column; gap: 4px; font-size: 10px;">
+                        <div style="color: #888; margin-bottom: 2px;">Camada 1:</div>
+                        <div style="display: flex; gap: 4px;">
+                            <input type="text" id="int-schema1" placeholder="schema1" value="ctm"
+                                   style="flex:1; padding: 5px; background: #0f0f23; border: 1px solid #333; border-radius: 4px; color: #fff; font-size: 10px;">
+                            <input type="text" id="int-table1" placeholder="table1" value="cdo_quadra"
+                                   style="flex:2; padding: 5px; background: #0f0f23; border: 1px solid #333; border-radius: 4px; color: #fff; font-size: 10px;">
+                        </div>
+                        <div style="display: flex; gap: 4px;">
+                            <input type="text" id="int-geom1" placeholder="geom1" value="geom"
+                                   style="flex:1; padding: 5px; background: #0f0f23; border: 1px solid #333; border-radius: 4px; color: #fff; font-size: 10px;">
+                            <input type="text" id="int-fields1" placeholder="campos (ex: id,nome)" value=""
+                                   style="flex:2; padding: 5px; background: #0f0f23; border: 1px solid #4ecca3; border-radius: 4px; color: #fff; font-size: 10px;"
+                                   title="Campos da tabela 1 (separados por vírgula). Vazio = todos">
+                        </div>
+                        <div style="color: #888; margin: 4px 0 2px;">Camada 2:</div>
+                        <div style="display: flex; gap: 4px;">
+                            <input type="text" id="int-schema2" placeholder="schema2" value="ctm"
+                                   style="flex:1; padding: 5px; background: #0f0f23; border: 1px solid #333; border-radius: 4px; color: #fff; font-size: 10px;">
+                            <input type="text" id="int-table2" placeholder="table2" value="ldm_poligono"
+                                   style="flex:2; padding: 5px; background: #0f0f23; border: 1px solid #333; border-radius: 4px; color: #fff; font-size: 10px;">
+                        </div>
+                        <div style="display: flex; gap: 4px;">
+                            <input type="text" id="int-geom2" placeholder="geom2" value="geom"
+                                   style="flex:1; padding: 5px; background: #0f0f23; border: 1px solid #333; border-radius: 4px; color: #fff; font-size: 10px;">
+                            <input type="text" id="int-fields2" placeholder="campos (ex: id,tipo)" value=""
+                                   style="flex:2; padding: 5px; background: #0f0f23; border: 1px solid #4ecca3; border-radius: 4px; color: #fff; font-size: 10px;"
+                                   title="Campos da tabela 2 (separados por vírgula). Vazio = todos">
+                        </div>
+                        <div style="display: flex; gap: 4px; align-items: center; margin-top: 6px;">
+                            <button onclick="addIntersectionLayer()"
+                                    style="flex: 1; padding: 8px; background: linear-gradient(90deg, #ff6b6b, #ff4757); border: none; border-radius: 4px; color: #fff; cursor: pointer; font-weight: 600;">
+                                Calcular Interseção
+                            </button>
+                            <label style="display: flex; align-items: center; gap: 3px; cursor: pointer;">
+                                <input type="checkbox" id="int-nocache" style="accent-color: #ff6b6b;">
+                                <span style="color: #ff6b6b; font-size: 9px;">NoCache</span>
+                            </label>
+                        </div>
+                        <div style="font-size: 9px; color: #666; margin-top: 4px;">
+                            Zoom mínimo: 10 | Campos com borda verde são opcionais
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Seção de Teste BUFFER -->
+                <div style="padding: 12px; border-top: 1px solid #333;">
+                    <h4 style="color: #ff9f43; margin-bottom: 10px; font-size: 12px;">TESTE BUFFER</h4>
+                    <div style="display: flex; flex-direction: column; gap: 4px; font-size: 10px;">
+                        <div style="display: flex; gap: 4px;">
+                            <input type="text" id="buf-schema" placeholder="schema" value="ctm"
+                                   style="flex:1; padding: 5px; background: #0f0f23; border: 1px solid #333; border-radius: 4px; color: #fff; font-size: 10px;">
+                            <input type="text" id="buf-table" placeholder="tabela" value="cdo_quadra"
+                                   style="flex:2; padding: 5px; background: #0f0f23; border: 1px solid #333; border-radius: 4px; color: #fff; font-size: 10px;">
+                        </div>
+                        <div style="display: flex; gap: 4px;">
+                            <input type="text" id="buf-geom" placeholder="geom" value="geom"
+                                   style="flex:1; padding: 5px; background: #0f0f23; border: 1px solid #333; border-radius: 4px; color: #fff; font-size: 10px;">
+                            <input type="text" id="buf-fields" placeholder="campos (opcional)" value=""
+                                   style="flex:2; padding: 5px; background: #0f0f23; border: 1px solid #4ecca3; border-radius: 4px; color: #fff; font-size: 10px;">
+                        </div>
+                        <div style="display: flex; gap: 4px; align-items: center;">
+                            <input type="number" id="buf-meters" placeholder="metros" value="50" min="1" max="10000"
+                                   style="flex:1; padding: 5px; background: #0f0f23; border: 1px solid #ff9f43; border-radius: 4px; color: #fff; font-size: 10px;">
+                            <span style="color: #888;">m</span>
+                            <label style="display: flex; align-items: center; gap: 3px; cursor: pointer;">
+                                <input type="checkbox" id="buf-dissolve" style="accent-color: #ff9f43;">
+                                <span style="color: #ff9f43; font-size: 9px;">Dissolver</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 3px; cursor: pointer;">
+                                <input type="checkbox" id="buf-nocache" style="accent-color: #ff6b6b;">
+                                <span style="color: #ff6b6b; font-size: 9px;">NoCache</span>
+                            </label>
+                        </div>
+                        <button onclick="addBufferLayer()"
+                                style="margin-top: 6px; padding: 8px; background: linear-gradient(90deg, #ff9f43, #ee5a24); border: none; border-radius: 4px; color: #fff; cursor: pointer; font-weight: 600;">
+                            Criar Buffer
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="map-container">
+                <div id="map"></div>
+
+                <!-- Feature Info Popup -->
+                <div class="feature-popup" id="feature-popup">
+                    <div class="feature-popup-header">
+                        <span id="popup-title">Atributos</span>
+                        <button class="feature-popup-close" onclick="closeFeaturePopup()">&times;</button>
+                    </div>
+                    <div class="feature-popup-content" id="popup-content">
+                        <!-- Atributos aqui -->
+                    </div>
+                    <div class="feature-nav" id="popup-nav" style="display: none;">
+                        <button onclick="showPrevFeature()" id="prev-feature-btn">&larr; Anterior</button>
+                        <span id="feature-counter">1 de 1</span>
+                        <button onclick="showNextFeature()" id="next-feature-btn">Próximo &rarr;</button>
+                    </div>
+                </div>
+
+                <div class="map-info">
+                    Zoom: <span id="zoom-level">-</span> |
+                    Centro: <span id="map-center">-</span>
+                </div>
+                <div class="debug-panel" id="debug-panel" style="display:none;">
+                    <h4>Debug</h4>
+                    <div><strong>Auth:</strong> <span id="debug-auth">-</span></div>
+                    <div><strong>Status:</strong> <span id="debug-status">-</span></div>
+                    <div><strong>Ultima Tile:</strong></div>
+                    <div class="debug-url" id="debug-url">-</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // =================================================================
+        // CONFIGURAÇÃO
+        // =================================================================
+        const API_BASE = 'http://localhost:8081';
+        const DEBUG = true;
+
+        // =================================================================
+        // ESTADO
+        // =================================================================
+        const state = {
+            user: null,
+            organizations: [],
+            currentOrg: null,
+            layers: [],
+            map: null,
+            tileLayers: {}
+        };
+
+        // =================================================================
+        // UTILIDADES
+        // =================================================================
+        function showView(viewId) {
+            document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+            document.getElementById(viewId).classList.add('active');
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').classList.toggle('active', show);
+        }
+
+        function showError(elementId, message) {
+            const el = document.getElementById(elementId);
+            el.textContent = message;
+            el.style.display = message ? 'block' : 'none';
+        }
+
+        function log(...args) {
+            if (DEBUG) console.log('[Viewer]', ...args);
+        }
+
+        // Decodificar JWT
+        function decodeJWT(token) {
+            try {
+                const payload = token.split('.')[1];
+                // Base64url to base64
+                let base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+                // Padding
+                while (base64.length % 4) base64 += '=';
+                const decoded = atob(base64);
+                return JSON.parse(decoded);
+            } catch (e) {
+                console.error('Erro ao decodificar JWT:', e);
+                return null;
+            }
+        }
+
+        // Requisição autenticada
+        async function apiRequest(endpoint, options = {}) {
+            const headers = {
+                'Content-Type': 'application/json',
+                ...options.headers
+            };
+
+            if (state.currentOrg) {
+                headers['X-Organization'] = state.currentOrg.id;
+            }
+
+            const response = await fetch(`${API_BASE}${endpoint}`, {
+                ...options,
+                headers,
+                credentials: 'include'
+            });
+
+            if (!response.ok) {
+                const text = await response.text();
+                throw new Error(`HTTP ${response.status}: ${text}`);
+            }
+
+            return response.json();
+        }
+
+        // =================================================================
+        // AUTENTICAÇÃO
+        // =================================================================
+
+        // Refresh token automático (access token tem TTL de 2 min)
+        const TOKEN_REFRESH_INTERVAL = 90 * 1000;  // 90 segundos
+        let refreshTokenInterval = null;
+
+        async function refreshToken() {
+            try {
+                log('Refreshing token...');
+                const response = await fetch(`${API_BASE}/api/auth/refresh-token`, {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+
+                if (response.ok) {
+                    log('Token refreshed successfully');
+                    document.getElementById('debug-status').textContent = 'Token OK';
+                    document.getElementById('debug-status').style.color = '#4ecca3';
+                    window._tokenExpiredAlerted = false;
+                    return true;
+                } else {
+                    log('Token refresh failed:', response.status);
+                    // Refresh token também expirou - precisa re-login
+                    if (response.status === 401) {
+                        stopTokenRefresh();
+                        document.getElementById('debug-status').textContent = 'Sessão expirada';
+                        document.getElementById('debug-status').style.color = '#ff4757';
+                        if (!window._tokenExpiredAlerted) {
+                            window._tokenExpiredAlerted = true;
+                            setTimeout(() => {
+                                if (confirm('Sessão expirada. Fazer login novamente?')) {
+                                    logout();
+                                }
+                            }, 100);
+                        }
+                    }
+                    return false;
+                }
+            } catch (error) {
+                log('Token refresh error:', error);
+                return false;
+            }
+        }
+
+        function startTokenRefresh() {
+            stopTokenRefresh();  // Limpa intervalo anterior se existir
+            log('Starting token refresh interval');
+            refreshTokenInterval = setInterval(refreshToken, TOKEN_REFRESH_INTERVAL);
+        }
+
+        function stopTokenRefresh() {
+            if (refreshTokenInterval) {
+                log('Stopping token refresh interval');
+                clearInterval(refreshTokenInterval);
+                refreshTokenInterval = null;
+            }
+        }
+
+        document.getElementById('login-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            showError('login-error', '');
+            showLoading(true);
+
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+
+            try {
+                const response = await fetch(`${API_BASE}/api/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password }),
+                    credentials: 'include'
+                });
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.detail || 'Credenciais inválidas');
+                }
+
+                const data = await response.json();
+                state.user = data.content.user;
+                window._tokenExpiredAlerted = false;  // Reset flag
+                log('Login OK:', state.user.email);
+
+                // Iniciar refresh automático do token
+                startTokenRefresh();
+
+                // Extrair organizações do JWT (está nos cookies)
+                // O cookie é HttpOnly então não conseguimos ler diretamente
+                // Mas podemos fazer uma requisição para pegar os dados
+
+                // Tentar extrair do cookie se possível
+                const allCookies = document.cookie;
+                log('Cookies:', allCookies);
+
+                // Buscar organizações fazendo decode do JWT via resposta
+                // Vamos buscar via endpoint /auth/me e extrair do contexto
+                await loadOrganizations();
+
+                showOrganizations();
+            } catch (error) {
+                log('Erro login:', error);
+                showError('login-error', error.message);
+            } finally {
+                showLoading(false);
+            }
+        });
+
+        async function loadOrganizations() {
+            // Como o JWT é HttpOnly, vamos buscar as conexões para identificar as orgs
+            // Primeiro tentamos com uma org conhecida
+            const knownOrgs = [
+                '055e5a53-1016-44df-9318-074f180f039d',
+                '448735db-786b-4558-8722-bc340d49b33b',
+                '7b6173d2-f604-4920-ba10-657c5308c9ff'
+            ];
+
+            state.organizations = [];
+
+            for (const orgId of knownOrgs) {
+                try {
+                    const response = await fetch(`${API_BASE}/api/connections?pageSize=1`, {
+                        headers: { 'X-Organization': orgId },
+                        credentials: 'include'
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.content && data.content.data && data.content.data.length > 0) {
+                            const conn = data.content.data[0];
+                            state.organizations.push({
+                                id: orgId,
+                                name: conn.name || `Org ${orgId.substring(0,8)}`,
+                                schema: conn.relatedSchema
+                            });
+                        }
+                    }
+                } catch (e) {
+                    // Org não acessível
+                }
+            }
+
+            log('Organizações encontradas:', state.organizations);
+        }
+
+        function showOrganizations() {
+            const list = document.getElementById('org-list');
+            list.innerHTML = state.organizations.map(org => `
+                <li class="org-item" onclick="selectOrg('${org.id}')">
+                    <div class="org-name">${org.name}</div>
+                    <div class="org-id">${org.id}</div>
+                </li>
+            `).join('');
+            showView('org-view');
+        }
+
+        async function selectOrg(orgId) {
+            showLoading(true);
+            state.currentOrg = state.organizations.find(o => o.id === orgId);
+            log('Org selecionada:', state.currentOrg);
+
+            try {
+                // Debug: verificar se cookies estão sendo enviados
+                const debugResponse = await fetch(`${API_BASE}/debug/auth`, {
+                    credentials: 'include'
+                });
+                const debugData = await debugResponse.json();
+                log('Debug auth:', debugData);
+
+                // Atualizar painel de debug
+                document.getElementById('debug-auth').textContent =
+                    debugData.has_token ? `OK (${debugData.user_email})` : 'SEM COOKIE!';
+
+                if (!debugData.has_token) {
+                    log('AVISO: Cookies não estão sendo enviados pelo browser!');
+                    console.warn('Cookies não estão sendo enviados - verificar configuração de cookies');
+                    document.getElementById('debug-status').textContent = 'Erro: cookies não enviados';
+                } else {
+                    document.getElementById('debug-status').textContent = 'OK';
+                }
+
+                await loadLayers();
+                initMap();
+                document.getElementById('current-org-name').textContent = state.currentOrg.name;
+                if (DEBUG) document.getElementById('debug-panel').style.display = 'block';
+                showView('map-view');
+            } catch (error) {
+                log('Erro ao carregar:', error);
+                alert('Erro ao carregar camadas: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function changeOrg() {
+            Object.values(state.tileLayers).forEach(layer => {
+                if (state.map) state.map.removeLayer(layer);
+            });
+            state.tileLayers = {};
+            state.layers = [];
+            showOrganizations();
+        }
+
+        function logout() {
+            stopTokenRefresh();  // Parar refresh automático
+            state.user = null;
+            state.organizations = [];
+            state.currentOrg = null;
+            state.layers = [];
+            showView('login-view');
+        }
+
+        // =================================================================
+        // CAMADAS
+        // =================================================================
+        async function loadLayers() {
+            log('Carregando camadas...');
+            const response = await apiRequest('/api/core/layers?isSpatialLayer=true&pageSize=50');
+            state.layers = response.content.data;
+            log(`${state.layers.length} camadas encontradas`);
+
+            // Carregar atributos de cada camada
+            for (const layer of state.layers) {
+                try {
+                    const attrsResponse = await apiRequest(`/api/core/layers/${layer.id}/layer-attributes?pageSize=50`);
+                    layer.attributes = attrsResponse.content.data || [];
+
+                    // Encontrar coluna de geometria
+                    const geomAttr = layer.attributes.find(a => a.mainGeometry === true);
+                    layer.geomColumn = geomAttr ? geomAttr.columnName : 'geom';
+
+                    // Schema vem da conexão
+                    layer.schema = layer.connection?.relatedSchema || 'public';
+
+                    log(`Camada ${layer.name}: schema=${layer.schema}, geom=${layer.geomColumn}, ${layer.attributes.length} campos`);
+                } catch (e) {
+                    log(`Erro ao carregar attrs da camada ${layer.id}:`, e);
+                    layer.attributes = [];
+                    layer.geomColumn = 'geom';
+                    layer.schema = 'public';
+                }
+            }
+
+            renderLayers();
+        }
+
+        function renderLayers() {
+            const list = document.getElementById('layers-list');
+            list.innerHTML = state.layers.map(layer => {
+                const geomAttr = layer.attributes.find(a => a.mainGeometry);
+                const otherAttrs = layer.attributes.filter(a => !a.mainGeometry);
+
+                return `
+                <div class="layer-item" id="layer-${layer.id}">
+                    <div class="layer-header">
+                        <input type="checkbox" class="layer-checkbox"
+                               onchange="toggleLayer(${layer.id}, this.checked, false)"
+                               ${state.tileLayers[layer.id] ? 'checked' : ''}>
+                        <div class="layer-info" onclick="toggleLayerDetails(${layer.id})">
+                            <div class="layer-name">${layer.name}</div>
+                            <div class="layer-meta">
+                                ${layer.tableName} | ${layer.recordsCount || 0} registros
+                            </div>
+                        </div>
+                    </div>
+                    <div class="layer-details">
+                        <div><strong>Schema:</strong> ${layer.schema}</div>
+                        <div><strong>Tabela:</strong> ${layer.tableName}</div>
+                        <div><strong>Geometria:</strong> ${layer.geomColumn} (${geomAttr?.attributeType || 'N/A'})</div>
+                        <div class="field-list">
+                            ${geomAttr ? `<span class="field-tag geom">${geomAttr.columnName}</span>` : ''}
+                            ${otherAttrs.slice(0, 10).map(attr =>
+                                `<span class="field-tag">${attr.columnName}</span>`
+                            ).join('')}
+                            ${otherAttrs.length > 10 ? `<span class="field-tag">+${otherAttrs.length - 10}</span>` : ''}
+                        </div>
+                    </div>
+                </div>
+                <div class="layer-item layer-optimized" id="layer-opt-${layer.id}">
+                    <div class="layer-header" style="background: linear-gradient(90deg, #0f0f23 0%, #1a3a2e 100%);">
+                        <input type="checkbox" class="layer-checkbox"
+                               onchange="toggleLayer(${layer.id}, this.checked, true)"
+                               ${state.tileLayers['opt-' + layer.id] ? 'checked' : ''}>
+                        <div class="layer-info" onclick="toggleLayerDetails(${layer.id})">
+                            <div class="layer-name" style="color: #4ecca3;">${layer.name} <span style="font-size:11px;background:#4ecca3;color:#000;padding:2px 6px;border-radius:4px;margin-left:6px;">OTIMIZADA</span></div>
+                            <div class="layer-meta">
+                                Simplificação + limite por zoom
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `}).join('');
+        }
+
+        function toggleLayerDetails(layerId) {
+            document.getElementById(`layer-${layerId}`).classList.toggle('expanded');
+        }
+
+        // =================================================================
+        // MAPA
+        // =================================================================
+        function initMap() {
+            if (state.map) {
+                state.map.setTarget(null);
+            }
+
+            // Centro em Goiânia (onde estão os dados)
+            state.map = new ol.Map({
+                target: 'map',
+                layers: [
+                    new ol.layer.Tile({
+                        source: new ol.source.OSM()
+                    })
+                ],
+                view: new ol.View({
+                    center: ol.proj.fromLonLat([-49.28, -16.68]),
+                    zoom: 12
+                })
+            });
+
+            state.map.on('moveend', updateMapInfo);
+            updateMapInfo();
+            log('Mapa inicializado');
+        }
+
+        function updateMapInfo() {
+            const view = state.map.getView();
+            const zoom = Math.round(view.getZoom());
+            const center = ol.proj.toLonLat(view.getCenter());
+            document.getElementById('zoom-level').textContent = zoom;
+            document.getElementById('map-center').textContent = `${center[0].toFixed(4)}, ${center[1].toFixed(4)}`;
+        }
+
+        // =================================================================
+        // TILES DINÂMICAS
+        // =================================================================
+        function toggleLayer(layerId, enabled, optimized = false) {
+            const layer = state.layers.find(l => l.id === layerId);
+            if (!layer) return;
+
+            const layerKey = optimized ? 'opt-' + layerId : layerId;
+            log(`Toggle layer ${layer.name} (${optimized ? 'OTIMIZADA' : 'original'}): ${enabled}`);
+
+            if (enabled) {
+                addTileLayer(layer, optimized);
+            } else {
+                removeTileLayer(layerKey);
+            }
+        }
+
+        function addTileLayer(layer, optimized = false) {
+            // Montar parâmetros da tile a partir dos metadados
+            const schema = layer.schema;
+            const table = layer.tableName;
+            const geom = layer.geomColumn;
+            const srid = '4326';
+            const layerKey = optimized ? 'opt-' + layer.id : layer.id;
+
+            // Selecionar campos (exceto geometria)
+            const fields = layer.attributes
+                .filter(a => !a.mainGeometry)
+                .map(a => a.columnName)
+                .slice(0, 10)
+                .join(',') || 'id';
+
+            // Cache buster para evitar cache de respostas de erro
+            const cacheBuster = Date.now();
+            // Usar rota otimizada ou original
+            const tileRoute = optimized ? '/tiles/dynamic-optimized/' : '/tiles/dynamic/';
+            const tileUrl = `${API_BASE}${tileRoute}{z}/{x}/{y}.pbf?` +
+                `schema=${encodeURIComponent(schema)}&` +
+                `table=${encodeURIComponent(table)}&` +
+                `geom=${encodeURIComponent(geom)}&` +
+                `srid=${srid}&` +
+                `fields=${encodeURIComponent(fields)}&` +
+                `_t=${cacheBuster}`;
+
+            log('Adicionando camada:', { name: layer.name, optimized, schema, table, geom, fields, tileUrl });
+
+            // Cores para cada camada
+            const colors = ['#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00', '#ffff33', '#a65628', '#f781bf'];
+            const color = colors[layer.id % colors.length];
+
+            // Criar source MVT - usar setLoader para correta integração com OpenLayers
+            const format = new ol.format.MVT();
+            const source = new ol.source.VectorTile({
+                format: format,
+                url: tileUrl,
+                maxZoom: 20,
+                cacheSize: 0,  // Desabilita cache interno do OpenLayers
+                tileLoadFunction: function(tile, src) {
+                    // Usar setLoader que é o método correto para VectorTile
+                    tile.setLoader(function(extent, resolution, projection) {
+                        const xhr = new XMLHttpRequest();
+                        xhr.open('GET', src);
+                        xhr.responseType = 'arraybuffer';
+                        xhr.withCredentials = true;  // Enviar cookies
+
+                        // Evitar cache do browser
+                        xhr.setRequestHeader('Cache-Control', 'no-cache, no-store');
+                        xhr.setRequestHeader('Pragma', 'no-cache');
+
+                        xhr.onload = function() {
+                            const data = xhr.response;
+                            const contentType = xhr.getResponseHeader('Content-Type') || '';
+
+                            if (xhr.status === 200 && data && data.byteLength > 0) {
+                                const bytes = new Uint8Array(data);
+                                const header = Array.from(bytes.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+
+                                // Detectar se é JSON de erro (começa com '{' = 0x7B)
+                                if (bytes[0] === 0x7B || contentType.includes('application/json')) {
+                                    // É JSON, provavelmente erro
+                                    try {
+                                        const text = new TextDecoder().decode(data);
+                                        const json = JSON.parse(text);
+                                        console.error('Tile error response:', json);
+                                        if (json.status === 401 || json.message?.includes('Token')) {
+                                            document.getElementById('debug-status').textContent = 'Refreshing...';
+                                            document.getElementById('debug-status').style.color = '#ffaa00';
+                                            // Tentar refresh do token
+                                            refreshToken().then(success => {
+                                                if (success) {
+                                                    // Recarregar tiles após refresh bem-sucedido
+                                                    log('Token refreshed, tiles will reload on next pan/zoom');
+                                                }
+                                                // Se falhou, refreshToken() já cuida do alerta
+                                            });
+                                        }
+                                    } catch (e) {
+                                        console.error('Response parsing error:', e);
+                                    }
+                                    tile.setFeatures([]);
+                                    return;
+                                }
+
+                                // Detectar gzip (1f 8b) - dados comprimidos por engano
+                                if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
+                                    console.error('ERRO: Tile comprimida com gzip! Header:', header);
+                                    document.getElementById('debug-status').textContent = 'GZIP ERROR!';
+                                    tile.setFeatures([]);
+                                    return;
+                                }
+
+                                // Log para debug
+                                if (DEBUG) {
+                                    log('Tile OK:', data.byteLength, 'bytes, header:', header);
+                                }
+                                try {
+                                    const features = format.readFeatures(data, {
+                                        extent: extent,
+                                        featureProjection: projection
+                                    });
+                                    tile.setFeatures(features);
+                                    if (DEBUG) log('Features parsed:', features.length);
+                                } catch (e) {
+                                    console.error('MVT parse error:', e, 'Header:', header);
+                                    tile.setFeatures([]);
+                                }
+                            } else if (xhr.status === 204 || (xhr.status === 200 && data && data.byteLength === 0)) {
+                                // Tile vazia
+                                tile.setFeatures([]);
+                            } else if (xhr.status === 401) {
+                                console.error('Tile 401 - sessão expirada');
+                                tile.setFeatures([]);
+                            } else {
+                                console.error('Tile error:', xhr.status, src);
+                                tile.setFeatures([]);
+                            }
+                        };
+
+                        xhr.onerror = function() {
+                            console.error('Tile network error:', src);
+                            tile.setFeatures([]);
+                        };
+
+                        xhr.send();
+                    });
+                }
+            });
+
+            // Cor diferente para camadas otimizadas (verde)
+            const finalColor = optimized ? '#4ecca3' : color;
+
+            // Criar layer com estilo
+            const vectorLayer = new ol.layer.VectorTile({
+                source: source,
+                style: new ol.style.Style({
+                    fill: new ol.style.Fill({ color: finalColor + '80' }),
+                    stroke: new ol.style.Stroke({ color: finalColor, width: 2 }),
+                    image: new ol.style.Circle({
+                        radius: 5,
+                        fill: new ol.style.Fill({ color: finalColor }),
+                        stroke: new ol.style.Stroke({ color: '#fff', width: 1 })
+                    })
+                })
+            });
+
+            log('Layer criada com cor:', finalColor, optimized ? '(otimizada)' : '');
+
+            state.map.addLayer(vectorLayer);
+            state.tileLayers[layerKey] = vectorLayer;
+
+            log(`Camada adicionada: ${layer.name}${optimized ? ' (OTIMIZADA)' : ''}`);
+        }
+
+        function removeTileLayer(layerId) {
+            if (state.tileLayers[layerId]) {
+                state.map.removeLayer(state.tileLayers[layerId]);
+                delete state.tileLayers[layerId];
+                log(`Camada removida: ${layerId}`);
+            }
+        }
+
+        function createLayerStyle(layer) {
+            const colors = [
+                '#4ecca3', '#ff6b6b', '#4ecdc4', '#ffe66d',
+                '#95e1d3', '#f38181', '#aa96da', '#fcbad3'
+            ];
+            const color = colors[layer.id % colors.length];
+
+            return new ol.style.Style({
+                fill: new ol.style.Fill({
+                    color: color + '60'
+                }),
+                stroke: new ol.style.Stroke({
+                    color: color,
+                    width: 2
+                }),
+                image: new ol.style.Circle({
+                    radius: 6,
+                    fill: new ol.style.Fill({ color: color }),
+                    stroke: new ol.style.Stroke({ color: '#fff', width: 2 })
+                })
+            });
+        }
+
+        // =================================================================
+        // TESTE MANUAL DE CAMADAS
+        // =================================================================
+        const testLayers = {};
+        let testLayerCounter = 0;
+
+        function addTestLayer(optimized) {
+            const schema = document.getElementById('test-schema').value.trim();
+            const table = document.getElementById('test-table').value.trim();
+            const geom = document.getElementById('test-geom').value.trim();
+            const noCache = document.getElementById('test-nocache').checked;
+
+            if (!schema || !table || !geom) {
+                alert('Preencha todos os campos');
+                return;
+            }
+
+            testLayerCounter++;
+            const layerKey = `test-${testLayerCounter}-${optimized ? 'opt' : 'orig'}`;
+            const tileRoute = optimized ? '/tiles/dynamic-optimized/' : '/tiles/dynamic/';
+            const cacheBuster = Date.now();
+
+            let tileUrl = `${API_BASE}${tileRoute}{z}/{x}/{y}.pbf?` +
+                `schema=${encodeURIComponent(schema)}&` +
+                `table=${encodeURIComponent(table)}&` +
+                `geom=${encodeURIComponent(geom)}&` +
+                `srid=4326&` +
+                `_t=${cacheBuster}`;
+
+            if (noCache) {
+                tileUrl += '&nocache=1';
+            }
+
+            log('Adicionando camada teste:', { schema, table, geom, optimized, tileUrl });
+
+            const format = new ol.format.MVT();
+            const source = new ol.source.VectorTile({
+                format: format,
+                url: tileUrl,
+                maxZoom: 20,
+                tileLoadFunction: function(tile, src) {
+                    tile.setLoader(function(extent, resolution, projection) {
+                        const xhr = new XMLHttpRequest();
+                        xhr.open('GET', src);
+                        xhr.responseType = 'arraybuffer';
+                        xhr.withCredentials = true;
+
+                        xhr.onload = function() {
+                            if (xhr.status === 200 && xhr.response) {
+                                const bytes = new Uint8Array(xhr.response);
+                                // Detectar erro JSON
+                                if (bytes[0] === 0x7B) {
+                                    console.error('Tile error');
+                                    tile.setFeatures([]);
+                                    return;
+                                }
+                                try {
+                                    const features = format.readFeatures(xhr.response, {
+                                        extent: extent,
+                                        featureProjection: projection
+                                    });
+                                    tile.setFeatures(features);
+                                    log(`Teste ${layerKey}: ${features.length} features, ${xhr.response.byteLength} bytes`);
+                                } catch (e) {
+                                    console.error('Parse error:', e);
+                                    tile.setFeatures([]);
+                                }
+                            } else {
+                                tile.setFeatures([]);
+                            }
+                        };
+                        xhr.onerror = () => tile.setFeatures([]);
+                        xhr.send();
+                    });
+                }
+            });
+
+            const color = optimized ? '#4ecca3' : '#ff6b6b';
+            const vectorLayer = new ol.layer.VectorTile({
+                source: source,
+                style: new ol.style.Style({
+                    fill: new ol.style.Fill({ color: color + '60' }),
+                    stroke: new ol.style.Stroke({ color: color, width: optimized ? 1 : 2 }),
+                })
+            });
+
+            state.map.addLayer(vectorLayer);
+            testLayers[layerKey] = vectorLayer;
+
+            log(`Camada teste adicionada: ${layerKey}`);
+            alert(`Camada ${optimized ? 'OTIMIZADA' : 'ORIGINAL'} adicionada!\nSchema: ${schema}\nTabela: ${table}`);
+        }
+
+        function clearTestLayers() {
+            Object.keys(testLayers).forEach(key => {
+                state.map.removeLayer(testLayers[key]);
+                delete testLayers[key];
+            });
+            log('Camadas de teste removidas');
+        }
+
+        function refreshTestLayers() {
+            const layerKeys = Object.keys(testLayers);
+            if (layerKeys.length === 0) {
+                log('Nenhuma camada de teste para atualizar');
+                return;
+            }
+
+            let refreshed = 0;
+            layerKeys.forEach(key => {
+                const layer = testLayers[key];
+                if (layer && layer.getSource) {
+                    const source = layer.getSource();
+                    if (source && source.refresh) {
+                        source.refresh();
+                        refreshed++;
+                    }
+                }
+            });
+
+            log(`${refreshed} camada(s) de teste atualizadas`);
+        }
+
+        function refreshAllLayers() {
+            let refreshed = 0;
+
+            // Refresh camadas padrão
+            Object.keys(state.tileLayers).forEach(key => {
+                const layer = state.tileLayers[key];
+                if (layer && layer.getSource) {
+                    const source = layer.getSource();
+                    if (source && source.refresh) {
+                        source.refresh();
+                        refreshed++;
+                    }
+                }
+            });
+
+            // Refresh camadas de teste
+            Object.keys(testLayers).forEach(key => {
+                const layer = testLayers[key];
+                if (layer && layer.getSource) {
+                    const source = layer.getSource();
+                    if (source && source.refresh) {
+                        source.refresh();
+                        refreshed++;
+                    }
+                }
+            });
+
+            log(`${refreshed} camada(s) atualizadas`);
+        }
+
+        // Atalho de teclado para refresh (Ctrl+R ou F5 parcial)
+        document.addEventListener('keydown', function(e) {
+            if ((e.ctrlKey && e.key === 'r') || e.key === 'F5') {
+                // Não previne o refresh padrão do browser, mas também atualiza as camadas
+                refreshAllLayers();
+            }
+        });
+
+        // =================================================================
+        // TESTE DE INTERSEÇÃO
+        // =================================================================
+        let intersectionLayerCounter = 0;
+
+        function addIntersectionLayer() {
+            const schema1 = document.getElementById('int-schema1').value.trim();
+            const table1 = document.getElementById('int-table1').value.trim();
+            const geom1 = document.getElementById('int-geom1').value.trim();
+            const fields1 = document.getElementById('int-fields1').value.trim();
+            const schema2 = document.getElementById('int-schema2').value.trim();
+            const table2 = document.getElementById('int-table2').value.trim();
+            const geom2 = document.getElementById('int-geom2').value.trim();
+            const fields2 = document.getElementById('int-fields2').value.trim();
+            const noCache = document.getElementById('int-nocache').checked;
+
+            if (!schema1 || !table1 || !geom1 || !schema2 || !table2 || !geom2) {
+                alert('Preencha todos os campos obrigatórios de ambas as camadas');
+                return;
+            }
+
+            // Verificar zoom mínimo
+            const currentZoom = Math.round(state.map.getView().getZoom());
+            if (currentZoom < 10) {
+                alert(`Zoom atual (${currentZoom}) é menor que o mínimo (10).\nAumente o zoom para ver a interseção.`);
+            }
+
+            intersectionLayerCounter++;
+            const layerKey = `intersection-${intersectionLayerCounter}`;
+            const cacheBuster = Date.now();
+
+            // Montar URL com campos opcionais
+            let tileUrl = `${API_BASE}/tiles/dynamic-intersection/{z}/{x}/{y}.pbf?` +
+                `schema1=${encodeURIComponent(schema1)}&` +
+                `table1=${encodeURIComponent(table1)}&` +
+                `geom1=${encodeURIComponent(geom1)}&` +
+                `srid1=4326&` +
+                `schema2=${encodeURIComponent(schema2)}&` +
+                `table2=${encodeURIComponent(table2)}&` +
+                `geom2=${encodeURIComponent(geom2)}&` +
+                `srid2=4326&` +
+                `layer_name=intersection&` +
+                `_t=${cacheBuster}`;
+
+            // Adicionar fields se especificados
+            if (fields1) {
+                tileUrl += `&fields1=${encodeURIComponent(fields1)}`;
+            }
+            if (fields2) {
+                tileUrl += `&fields2=${encodeURIComponent(fields2)}`;
+            }
+
+            if (noCache) {
+                tileUrl += '&nocache=1';
+            }
+
+            log('Adicionando camada de interseção:', { schema1, table1, fields1, schema2, table2, fields2, noCache, tileUrl });
+
+            const format = new ol.format.MVT();
+            const source = new ol.source.VectorTile({
+                format: format,
+                url: tileUrl,
+                maxZoom: 20,
+                tileLoadFunction: function(tile, src) {
+                    tile.setLoader(function(extent, resolution, projection) {
+                        const xhr = new XMLHttpRequest();
+                        xhr.open('GET', src);
+                        xhr.responseType = 'arraybuffer';
+                        xhr.withCredentials = true;
+
+                        xhr.onload = function() {
+                            if (xhr.status === 200 && xhr.response) {
+                                const bytes = new Uint8Array(xhr.response);
+                                // Detectar erro JSON
+                                if (bytes[0] === 0x7B) {
+                                    try {
+                                        const text = new TextDecoder().decode(xhr.response);
+                                        const json = JSON.parse(text);
+                                        console.error('Intersection error:', json);
+                                        if (json.message?.includes('zoom')) {
+                                            log('Zoom muito baixo para interseção');
+                                        }
+                                    } catch(e) {}
+                                    tile.setFeatures([]);
+                                    return;
+                                }
+                                try {
+                                    const features = format.readFeatures(xhr.response, {
+                                        extent: extent,
+                                        featureProjection: projection
+                                    });
+                                    tile.setFeatures(features);
+                                    log(`Interseção ${layerKey}: ${features.length} features, ${xhr.response.byteLength} bytes`);
+                                } catch (e) {
+                                    console.error('Intersection parse error:', e);
+                                    tile.setFeatures([]);
+                                }
+                            } else {
+                                tile.setFeatures([]);
+                            }
+                        };
+                        xhr.onerror = () => tile.setFeatures([]);
+                        xhr.send();
+                    });
+                }
+            });
+
+            // Cor especial para interseção (laranja/vermelho)
+            const vectorLayer = new ol.layer.VectorTile({
+                source: source,
+                style: new ol.style.Style({
+                    fill: new ol.style.Fill({ color: '#ff6b6b80' }),
+                    stroke: new ol.style.Stroke({ color: '#ff4757', width: 3 }),
+                })
+            });
+
+            state.map.addLayer(vectorLayer);
+            testLayers[layerKey] = vectorLayer;
+
+            log(`Camada de interseção adicionada: ${layerKey}`);
+
+            // Montar mensagem de alerta com info dos campos
+            let fieldsInfo = '';
+            if (fields1 || fields2) {
+                fieldsInfo = '\n\nCampos selecionados:';
+                if (fields1) fieldsInfo += `\n  ${table1}: ${fields1}`;
+                else fieldsInfo += `\n  ${table1}: (todos)`;
+                if (fields2) fieldsInfo += `\n  ${table2}: ${fields2}`;
+                else fieldsInfo += `\n  ${table2}: (todos)`;
+            }
+
+            alert(`Camada de INTERSEÇÃO adicionada!\n${table1} ∩ ${table2}${fieldsInfo}\n\nZoom mínimo: 10\nAtributos terão prefixo l1_ e l2_`);
+        }
+
+        // =================================================================
+        // TESTE DE BUFFER
+        // =================================================================
+        let bufferLayerCounter = 0;
+
+        function addBufferLayer() {
+            const schema = document.getElementById('buf-schema').value.trim();
+            const table = document.getElementById('buf-table').value.trim();
+            const geom = document.getElementById('buf-geom').value.trim();
+            const fields = document.getElementById('buf-fields').value.trim();
+            const bufferMeters = document.getElementById('buf-meters').value.trim();
+            const dissolve = document.getElementById('buf-dissolve').checked;
+            const noCache = document.getElementById('buf-nocache').checked;
+
+            if (!schema || !table || !geom) {
+                alert('Preencha schema, tabela e coluna de geometria');
+                return;
+            }
+
+            if (!bufferMeters || parseFloat(bufferMeters) <= 0) {
+                alert('Distância do buffer deve ser maior que 0');
+                return;
+            }
+
+            bufferLayerCounter++;
+            const layerKey = `buffer-${bufferLayerCounter}`;
+            const cacheBuster = Date.now();
+
+            // Montar URL
+            let tileUrl = `${API_BASE}/tiles/dynamic-buffer/{z}/{x}/{y}.pbf?` +
+                `schema=${encodeURIComponent(schema)}&` +
+                `table=${encodeURIComponent(table)}&` +
+                `geom=${encodeURIComponent(geom)}&` +
+                `srid=4326&` +
+                `buffer_meters=${encodeURIComponent(bufferMeters)}&` +
+                `dissolve=${dissolve}&` +
+                `layer_name=buffer&` +
+                `_t=${cacheBuster}`;
+
+            if (fields) {
+                tileUrl += `&fields=${encodeURIComponent(fields)}`;
+            }
+
+            if (noCache) {
+                tileUrl += '&nocache=1';
+            }
+
+            log('Adicionando camada de buffer:', { schema, table, bufferMeters, dissolve, noCache, url: tileUrl.replace('{z}/{x}/{y}', '14/5948/8960') });
+
+            const format = new ol.format.MVT();
+            const source = new ol.source.VectorTile({
+                format: format,
+                url: tileUrl,
+                maxZoom: 20,
+                tileLoadFunction: function(tile, src) {
+                    tile.setLoader(function(extent, resolution, projection) {
+                        const xhr = new XMLHttpRequest();
+                        xhr.open('GET', src);
+                        xhr.responseType = 'arraybuffer';
+                        xhr.withCredentials = true;
+
+                        xhr.onload = function() {
+                            if (xhr.status === 200 && xhr.response) {
+                                const bytes = new Uint8Array(xhr.response);
+                                if (bytes[0] === 0x7B) {
+                                    try {
+                                        const text = new TextDecoder().decode(xhr.response);
+                                        console.error('Buffer error:', JSON.parse(text));
+                                    } catch(e) {}
+                                    tile.setFeatures([]);
+                                    return;
+                                }
+                                try {
+                                    const features = format.readFeatures(xhr.response, {
+                                        extent: extent,
+                                        featureProjection: projection
+                                    });
+                                    tile.setFeatures(features);
+                                    log(`Buffer ${layerKey}: ${features.length} features, ${xhr.response.byteLength} bytes`);
+                                } catch (e) {
+                                    console.error('Buffer parse error:', e);
+                                    tile.setFeatures([]);
+                                }
+                            } else {
+                                tile.setFeatures([]);
+                            }
+                        };
+                        xhr.onerror = () => tile.setFeatures([]);
+                        xhr.send();
+                    });
+                }
+            });
+
+            // Cor laranja para buffer
+            const vectorLayer = new ol.layer.VectorTile({
+                source: source,
+                style: new ol.style.Style({
+                    fill: new ol.style.Fill({ color: '#ff9f4360' }),
+                    stroke: new ol.style.Stroke({ color: '#ee5a24', width: 2 }),
+                })
+            });
+
+            state.map.addLayer(vectorLayer);
+            testLayers[layerKey] = vectorLayer;
+
+            log(`Camada de buffer adicionada: ${layerKey}`);
+            alert(`Camada de BUFFER adicionada!\n${table} + ${bufferMeters}m${dissolve ? ' (dissolvido)' : ''}`);
+        }
+
+        // =================================================================
+        // FERRAMENTA DE IDENTIFICAÇÃO (Feature Info)
+        // =================================================================
+        let identifyToolActive = false;
+        let identifiedFeatures = [];
+        let currentFeatureIndex = 0;
+        let mapClickHandler = null;
+
+        function toggleIdentifyTool() {
+            identifyToolActive = !identifyToolActive;
+            const btn = document.getElementById('identify-btn');
+            btn.classList.toggle('active', identifyToolActive);
+
+            if (identifyToolActive) {
+                log('Ferramenta de identificação ATIVADA');
+                document.getElementById('map').style.cursor = 'crosshair';
+
+                // Adicionar listener de clique
+                mapClickHandler = function(evt) {
+                    if (!identifyToolActive) return;
+                    handleMapClick(evt);
+                };
+                state.map.on('click', mapClickHandler);
+            } else {
+                log('Ferramenta de identificação DESATIVADA');
+                document.getElementById('map').style.cursor = '';
+                closeFeaturePopup();
+
+                // Remover listener
+                if (mapClickHandler) {
+                    state.map.un('click', mapClickHandler);
+                    mapClickHandler = null;
+                }
+            }
+        }
+
+        function handleMapClick(evt) {
+            const pixel = evt.pixel;
+            const coordinate = evt.coordinate;
+            identifiedFeatures = [];
+
+            // Buscar features em todas as camadas vetoriais no ponto clicado
+            state.map.forEachFeatureAtPixel(pixel, function(feature, layer) {
+                if (feature) {
+                    const props = feature.getProperties();
+                    // Remover propriedade de geometria do display
+                    const displayProps = {};
+                    for (const key in props) {
+                        if (key !== 'geometry' && props[key] !== undefined && props[key] !== null) {
+                            displayProps[key] = props[key];
+                        }
+                    }
+
+                    // Identificar de qual layer veio
+                    let layerName = 'Desconhecida';
+                    for (const [key, lyr] of Object.entries(state.tileLayers)) {
+                        if (lyr === layer) {
+                            const layerInfo = state.layers.find(l => l.id == key || 'opt-' + l.id == key);
+                            layerName = layerInfo ? layerInfo.name : key;
+                            break;
+                        }
+                    }
+                    // Verificar também testLayers
+                    for (const [key, lyr] of Object.entries(testLayers)) {
+                        if (lyr === layer) {
+                            layerName = key;
+                            break;
+                        }
+                    }
+
+                    identifiedFeatures.push({
+                        properties: displayProps,
+                        layerName: layerName
+                    });
+                }
+            }, {
+                hitTolerance: 5
+            });
+
+            if (identifiedFeatures.length > 0) {
+                currentFeatureIndex = 0;
+                showFeaturePopup(pixel);
+                log(`Encontradas ${identifiedFeatures.length} features`);
+            } else {
+                closeFeaturePopup();
+                log('Nenhuma feature encontrada no ponto clicado');
+            }
+        }
+
+        function showFeaturePopup(pixel) {
+            const popup = document.getElementById('feature-popup');
+            const content = document.getElementById('popup-content');
+            const nav = document.getElementById('popup-nav');
+            const counter = document.getElementById('feature-counter');
+            const title = document.getElementById('popup-title');
+
+            const feature = identifiedFeatures[currentFeatureIndex];
+            const props = feature.properties;
+
+            // Título com nome da layer
+            title.textContent = feature.layerName;
+
+            // Construir conteúdo
+            let html = '';
+            const keys = Object.keys(props).sort();
+
+            if (keys.length === 0) {
+                html = '<div style="color: #888; text-align: center; padding: 20px;">Sem atributos disponíveis</div>';
+            } else {
+                for (const key of keys) {
+                    let value = props[key];
+
+                    // Formatar valores especiais
+                    if (value === null || value === undefined) {
+                        value = '<span style="color: #666;">NULL</span>';
+                    } else if (typeof value === 'number') {
+                        // Formatar números
+                        if (Number.isInteger(value)) {
+                            value = value.toLocaleString('pt-BR');
+                        } else {
+                            value = value.toLocaleString('pt-BR', { maximumFractionDigits: 4 });
+                        }
+                    } else if (typeof value === 'boolean') {
+                        value = value ? '<span style="color: #4ecca3;">Sim</span>' : '<span style="color: #ff6b6b;">Não</span>';
+                    } else if (typeof value === 'string' && value.length > 100) {
+                        value = value.substring(0, 100) + '...';
+                    }
+
+                    html += `
+                        <div class="feature-attr">
+                            <div class="feature-attr-key">${key}</div>
+                            <div class="feature-attr-value">${value}</div>
+                        </div>
+                    `;
+                }
+            }
+
+            content.innerHTML = html;
+
+            // Mostrar/ocultar navegação se múltiplas features
+            if (identifiedFeatures.length > 1) {
+                nav.style.display = 'flex';
+                counter.textContent = `${currentFeatureIndex + 1} de ${identifiedFeatures.length}`;
+                document.getElementById('prev-feature-btn').disabled = currentFeatureIndex === 0;
+                document.getElementById('next-feature-btn').disabled = currentFeatureIndex === identifiedFeatures.length - 1;
+            } else {
+                nav.style.display = 'none';
+            }
+
+            // Posicionar popup próximo ao clique
+            const mapRect = document.getElementById('map').getBoundingClientRect();
+            let left = pixel[0] + 15;
+            let top = pixel[1] + 15;
+
+            // Ajustar se sair da tela
+            const popupWidth = 320;
+            const popupHeight = 350;
+
+            if (left + popupWidth > mapRect.width) {
+                left = pixel[0] - popupWidth - 15;
+            }
+            if (top + popupHeight > mapRect.height) {
+                top = pixel[1] - popupHeight - 15;
+            }
+            if (left < 0) left = 10;
+            if (top < 0) top = 10;
+
+            popup.style.left = left + 'px';
+            popup.style.top = top + 'px';
+            popup.classList.add('active');
+        }
+
+        function closeFeaturePopup() {
+            document.getElementById('feature-popup').classList.remove('active');
+            identifiedFeatures = [];
+            currentFeatureIndex = 0;
+        }
+
+        function showPrevFeature() {
+            if (currentFeatureIndex > 0) {
+                currentFeatureIndex--;
+                // Manter mesma posição
+                const popup = document.getElementById('feature-popup');
+                const left = parseInt(popup.style.left);
+                const top = parseInt(popup.style.top);
+                showFeaturePopup([left - 15, top - 15]);
+            }
+        }
+
+        function showNextFeature() {
+            if (currentFeatureIndex < identifiedFeatures.length - 1) {
+                currentFeatureIndex++;
+                // Manter mesma posição
+                const popup = document.getElementById('feature-popup');
+                const left = parseInt(popup.style.left);
+                const top = parseInt(popup.style.top);
+                showFeaturePopup([left - 15, top - 15]);
+            }
+        }
+
+        // Fechar popup com ESC
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeFeaturePopup();
+            }
+        });
+
+        // =================================================================
+        // INIT
+        // =================================================================
+        log('Viewer iniciado');
+    </script>
+</body>
+</html>

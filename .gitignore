@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor directories
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Cache
+.cache/
+.claude/
+
+# Temporary files
+*.tmp
+*.swp
+*~
+
+# OpenResty cache
+openresty/cache/
+
+# Test data
+*.pbf.test

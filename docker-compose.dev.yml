@@ -1,0 +1,104 @@
+# =============================================================================
+# Docker Compose - Ambiente de Desenvolvimento
+# =============================================================================
+# Simula serviços externos localmente para desenvolvimento e testes
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # OpenResty Proxy (o que estamos desenvolvendo)
+  # ---------------------------------------------------------------------------
+  openresty:
+    build: ./openresty
+    ports:
+      - "8081:80"
+    environment:
+      # Aponta para serviços locais (simulando externos)
+      - MARTIN_URL=http://martin:3000
+      - MINIO_URL=http://minio:9000
+      # Backend api-geo360 externo
+      - BACKEND_URL=https://api.geo360pro.topocart.dev.br/v2
+      - BACKEND_HOST=api.geo360pro.topocart.dev.br
+    depends_on:
+      martin:
+        condition: service_started
+      minio:
+        condition: service_started
+    networks:
+      - dev-net
+    volumes:
+      # Hot reload dos arquivos Lua em dev
+      - ./openresty/lua:/usr/local/openresty/nginx/lua:ro
+      # Viewer para desenvolvimento
+      - ./viewer:/var/www/viewer:ro
+    restart: on-failure
+
+  # ---------------------------------------------------------------------------
+  # Martin Tile Server (apontando para banco externo)
+  # ---------------------------------------------------------------------------
+  martin:
+    image: ghcr.io/maplibre/martin:latest
+    command: ["--config", "/config.yml"]
+    environment:
+      - DATABASE_URL=postgresql://etopocart:TN4q@10.61.112.11:5433/ladm_goiania_teste
+    ports:
+      - "3030:3000"  # Expor Martin para testes diretos
+    volumes:
+      - ./martin/config.yml:/config.yml:ro
+    networks:
+      - dev-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ---------------------------------------------------------------------------
+  # MinIO Object Storage (simulando serviço externo)
+  # ---------------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9001:9001"  # Console para debug
+    volumes:
+      - minio_data:/data
+    networks:
+      - dev-net
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL + PostGIS (para Martin)
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgis/postgis:16-3.5
+    environment:
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: teste_tiles
+    ports:
+      - "5433:5432"  # Exposto para debug/psql direto
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d:ro
+    networks:
+      - dev-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev -d teste_tiles"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Backend api-geo360
+  # ---------------------------------------------------------------------------
+  # NOTA: O backend api-geo360 roda LOCALMENTE (fora do Docker) na porta 7000
+  # Use: cd /tmp/api-geo360 && uv run uvicorn main.main:app --host 0.0.0.0 --port 7000
+  # O OpenResty acessa via host.docker.internal:7000
+
+networks:
+  dev-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  minio_data:

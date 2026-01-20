@@ -1,0 +1,36 @@
+# =============================================================================
+# Docker Compose - Produção
+# =============================================================================
+# Apenas o proxy OpenResty - backends são externos
+# Configurar URLs via .env ou variáveis de ambiente
+# =============================================================================
+
+services:
+  openresty:
+    build: ./openresty
+    ports:
+      - "8080:80"
+    environment:
+      - MARTIN_URL=${MARTIN_URL}
+      - MINIO_URL=${MINIO_URL}
+      - BACKEND_URL=${BACKEND_URL}
+    restart: unless-stopped
+    volumes:
+      # Persistir cache entre restarts (opcional)
+      - tiles_cache:/tmp/tiles_cache
+      - storage_cache:/tmp/storage_cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  tiles_cache:
+  storage_cache:
